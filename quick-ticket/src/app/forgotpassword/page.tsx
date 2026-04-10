@@ -48,43 +48,58 @@ export default function ForgotPasswordPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-100 via-white to-gray-200 px-4">
+    <div className="min-h-screen flex items-center justify-center
+                    bg-gradient-to-br from-gray-100 via-white to-gray-200
+                    px-4 sm:px-6 lg:px-8">
 
       {/* background glow */}
-      <div className="absolute w-[420px] h-[420px] bg-black/5 blur-3xl rounded-full -z-10" />
+      <div className="absolute w-[250px] sm:w-[350px] lg:w-[450px]
+                      h-[250px] sm:h-[350px] lg:h-[450px]
+                      bg-black/5 blur-3xl rounded-full -z-10" />
 
-      <div className="w-full max-w-md p-8 bg-white/70 backdrop-blur-2xl border border-gray-200 rounded-3xl shadow-2xl">
+      {/* CARD */}
+      <div className="w-full
+                      max-w-sm sm:max-w-md md:max-w-lg
+                      p-5 sm:p-6 md:p-8
+                      bg-white/70 backdrop-blur-2xl
+                      border border-gray-200
+                      rounded-2xl sm:rounded-3xl
+                      shadow-lg sm:shadow-xl md:shadow-2xl">
 
-        {/* Header */}
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-semibold tracking-tight">
+        {/* HEADER */}
+        <div className="text-center mb-6 sm:mb-7 md:mb-8">
+          <h1 className="text-xl sm:text-2xl md:text-3xl font-semibold tracking-tight">
             Forgot Password
           </h1>
-          <p className="text-sm text-gray-500 mt-2">
+          <p className="text-xs sm:text-sm text-gray-500 mt-2">
             We’ll send you a reset link
           </p>
         </div>
 
-        {/* Form */}
-        <form onSubmit={handleReset} className="space-y-5">
+        {/* FORM */}
+        <form onSubmit={handleReset} className="space-y-4 sm:space-y-5">
 
-          {/* Error */}
+          {/* ERROR */}
           {errorMsg && (
-            <div className="text-sm text-red-600 bg-red-50 border border-red-200 p-3 rounded-xl">
+            <div className="text-xs sm:text-sm text-red-600
+                            bg-red-50 border border-red-200
+                            p-2.5 sm:p-3 rounded-xl">
               {errorMsg}
             </div>
           )}
 
-          {/* Success */}
+          {/* SUCCESS */}
           {message && (
-            <div className="text-sm text-green-700 bg-green-50 border border-green-200 p-3 rounded-xl">
+            <div className="text-xs sm:text-sm text-green-700
+                            bg-green-50 border border-green-200
+                            p-2.5 sm:p-3 rounded-xl">
               {message}
             </div>
           )}
 
-          {/* Email */}
+          {/* EMAIL */}
           <div>
-            <label className="text-xs text-gray-500 uppercase">
+            <label className="text-[11px] sm:text-xs text-gray-500 uppercase">
               Email
             </label>
 
@@ -92,17 +107,24 @@ export default function ForgotPasswordPage() {
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full mt-2 p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-black/70 outline-none"
+              className="w-full mt-1.5 sm:mt-2
+                         p-3 sm:p-3.5
+                         border border-gray-200
+                         rounded-xl
+                         focus:ring-2 focus:ring-black/70
+                         outline-none text-sm sm:text-base"
               placeholder="you@example.com"
               autoComplete="email"
             />
           </div>
 
-          {/* Submit */}
+          {/* BUTTON */}
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-black text-white py-3 rounded-xl font-medium
+            className="w-full bg-black text-white
+                       py-3 sm:py-3.5
+                       rounded-xl font-medium text-sm sm:text-base
                        hover:scale-[1.01] active:scale-[0.98]
                        transition disabled:opacity-50"
           >
@@ -110,8 +132,8 @@ export default function ForgotPasswordPage() {
           </button>
         </form>
 
-        {/* Footer */}
-        <p className="text-center text-sm text-gray-500 mt-6">
+        {/* FOOTER */}
+        <p className="text-center text-xs sm:text-sm text-gray-500 mt-6 sm:mt-7">
           Remember your password?{" "}
           <Link href="/login" className="text-black hover:underline">
             Go to login

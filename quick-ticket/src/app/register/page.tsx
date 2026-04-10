@@ -21,12 +21,17 @@ export default function RegisterPage() {
   const validateEmail = (email: string) =>
     /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
+  const clearError = () => {
+    if (errorMsg) setErrorMsg("");
+  };
+
   const handleRegister = async (e?: React.FormEvent) => {
     e?.preventDefault();
 
     if (loading) return;
     setErrorMsg("");
 
+    // ---------------- VALIDATION ----------------
     if (!email || !password || !confirmPassword) {
       setErrorMsg("Please fill in all fields");
       return;
@@ -47,68 +52,91 @@ export default function RegisterPage() {
       return;
     }
 
-    setLoading(true);
+    try {
+      setLoading(true);
 
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-    });
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+      });
 
-    setLoading(false);
+      if (error) {
+        setErrorMsg(error.message || "Signup failed");
+        return;
+      }
 
-    if (error) {
-      setErrorMsg(error.message);
-      return;
+      const user = data?.user;
+
+      if (user) {
+        await supabase.from("profiles").upsert(
+          {
+            id: user.id,
+            email: user.email,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "id" }
+        );
+      }
+
+      router.replace("/login");
+    } catch (err) {
+      console.error(err);
+      setErrorMsg("Unexpected error. Please try again.");
+    } finally {
+      setLoading(false);
     }
-
-    router.push("/login");
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-100 via-white to-gray-200 px-4">
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-100 via-white to-gray-200 px-4 sm:px-6 lg:px-8">
 
-      {/* background glow */}
-      <div className="absolute w-[420px] h-[420px] bg-black/5 blur-3xl rounded-full -z-10" />
+      {/* BACKGROUND GLOW */}
+      <div className="absolute w-[280px] sm:w-[400px] md:w-[500px] h-[280px] sm:h-[400px] md:h-[500px] bg-black/5 blur-3xl rounded-full -z-10" />
 
-      <div className="w-full max-w-md p-8 bg-white/70 backdrop-blur-2xl border border-gray-200 rounded-3xl shadow-2xl">
+      {/* CARD */}
+      <div className="w-full max-w-sm sm:max-w-md md:max-w-lg lg:max-w-xl p-5 sm:p-6 md:p-8 bg-white/70 backdrop-blur-2xl border border-gray-200 rounded-2xl sm:rounded-3xl shadow-xl md:shadow-2xl">
 
-        {/* Header */}
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-semibold tracking-tight">
+        {/* HEADER */}
+        <div className="text-center mb-6 sm:mb-8">
+          <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">
             Create account
           </h1>
-          <p className="text-sm text-gray-500 mt-2">
-            Sign up to get started
+          <p className="text-xs sm:text-sm text-gray-500 mt-1 sm:mt-2">
+            Join us and get started
           </p>
         </div>
 
-        <form onSubmit={handleRegister} className="space-y-5">
+        {/* FORM */}
+        <form onSubmit={handleRegister} className="space-y-4 sm:space-y-5">
 
-          {/* Error */}
+          {/* ERROR */}
           {errorMsg && (
             <div className="text-sm text-red-600 bg-red-50 border border-red-200 p-3 rounded-xl">
               {errorMsg}
             </div>
           )}
 
-          {/* Email */}
+          {/* EMAIL */}
           <div>
-            <label className="text-xs text-gray-500 uppercase">
+            <label className="text-xs text-gray-500 uppercase tracking-wide">
               Email
             </label>
             <input
               type="email"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full mt-2 p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-black/70 outline-none"
+              disabled={loading}
+              onChange={(e) => {
+                setEmail(e.target.value);
+                clearError();
+              }}
               placeholder="you@example.com"
-              autoComplete="email"
+              className="w-full mt-2 p-3 sm:p-3.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-black/40 outline-none transition text-sm sm:text-base"
             />
           </div>
 
-          {/* Password */}
+          {/* PASSWORD */}
           <div>
-            <label className="text-xs text-gray-500 uppercase">
+            <label className="text-xs text-gray-500 uppercase tracking-wide">
               Password
             </label>
 
@@ -116,29 +144,29 @@ export default function RegisterPage() {
               <input
                 type={showPassword ? "text" : "password"}
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full p-3 border border-gray-200 rounded-xl pr-12 focus:ring-2 focus:ring-black/70 outline-none"
+                disabled={loading}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  clearError();
+                }}
                 placeholder="••••••••"
-                autoComplete="new-password"
+                className="w-full p-3 sm:p-3.5 border border-gray-200 rounded-xl pr-12 focus:ring-2 focus:ring-black/40 outline-none transition text-sm sm:text-base"
               />
 
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-black"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-black transition"
+                aria-label="Toggle password visibility"
               >
-                {showPassword ? (
-                  <EyeOff size={18} />
-                ) : (
-                  <Eye size={18} />
-                )}
+                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
               </button>
             </div>
           </div>
 
-          {/* Confirm Password */}
+          {/* CONFIRM PASSWORD */}
           <div>
-            <label className="text-xs text-gray-500 uppercase">
+            <label className="text-xs text-gray-500 uppercase tracking-wide">
               Confirm Password
             </label>
 
@@ -146,10 +174,13 @@ export default function RegisterPage() {
               <input
                 type={showConfirmPassword ? "text" : "password"}
                 value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                className="w-full p-3 border border-gray-200 rounded-xl pr-12 focus:ring-2 focus:ring-black/70 outline-none"
+                disabled={loading}
+                onChange={(e) => {
+                  setConfirmPassword(e.target.value);
+                  clearError();
+                }}
                 placeholder="••••••••"
-                autoComplete="new-password"
+                className="w-full p-3 sm:p-3.5 border border-gray-200 rounded-xl pr-12 focus:ring-2 focus:ring-black/40 outline-none transition text-sm sm:text-base"
               />
 
               <button
@@ -157,31 +188,28 @@ export default function RegisterPage() {
                 onClick={() =>
                   setShowConfirmPassword(!showConfirmPassword)
                 }
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-black"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-black transition"
+                aria-label="Toggle confirm password visibility"
               >
-                {showConfirmPassword ? (
-                  <EyeOff size={18} />
-                ) : (
-                  <Eye size={18} />
-                )}
+                {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
               </button>
             </div>
           </div>
 
-          {/* Submit */}
+          {/* BUTTON */}
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-black text-white py-3 rounded-xl font-medium
+            className="w-full bg-black text-white py-3 sm:py-3.5 rounded-xl font-medium text-sm sm:text-base
                        hover:scale-[1.01] active:scale-[0.98]
-                       transition disabled:opacity-50"
+                       transition disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {loading ? "Creating account..." : "Register"}
+            {loading ? "Creating account..." : "Create account"}
           </button>
         </form>
 
-        {/* Footer */}
-        <p className="text-center text-sm text-gray-500 mt-6">
+        {/* FOOTER */}
+        <p className="text-center text-sm text-gray-500 mt-6 sm:mt-8">
           Already have an account?{" "}
           <Link href="/login" className="text-black hover:underline">
             Login
