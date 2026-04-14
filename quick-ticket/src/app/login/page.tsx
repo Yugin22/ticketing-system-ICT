@@ -54,17 +54,43 @@ export default function LoginPage() {
     try {
       setLoading(true);
 
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
 
-      if (error) {
-        setErrorMsg(getFriendlyError(error.message));
-        return;
-      }
+    if (error) {
+      setErrorMsg(getFriendlyError(error.message));
+      return;
+    }
 
+    // 🔥 GET LOGGED IN USER
+    const { data: userData } = await supabase.auth.getUser();
+
+    if (!userData.user) {
+      setErrorMsg("Login failed. Try again.");
+      return;
+    }
+
+    // 🔥 FETCH ROLE FROM PROFILES
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", userData.user.id)
+      .single();
+
+    if (profileError || !profile) {
+      setErrorMsg("Failed to load user role");
+      return;
+    }
+
+    // 🔀 ROLE-BASED REDIRECT
+    if (profile.role === "admin") {
+      router.replace("/admin");
+    } else {
       router.replace("/dashboard");
+    }
+    
     } catch {
       setErrorMsg("Unexpected error. Please try again.");
     } finally {

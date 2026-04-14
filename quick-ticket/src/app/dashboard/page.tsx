@@ -31,22 +31,94 @@ export default function DashboardPage() {
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
-    initUser();
+    let channel: any;
+
+    const setup = async () => {
+      const { data } = await supabase.auth.getUser();
+
+      if (!data.user) {
+        router.replace("/login");
+        return; 
+      }
+
+      await initUser();
+
+      // ✅ prevent duplicate subscription in React Strict Mode
+      supabase.removeChannel(supabase.channel("tickets-changes"));
+
+      channel = supabase
+        .channel("tickets-changes")
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "tickets",
+          },
+          (payload) => {
+            console.log("Realtime update:", payload);
+            initUser();
+          }
+        )
+        .subscribe();
+    };
+
+    setup();
+
+    return () => {
+      if (channel) {
+        supabase.removeChannel(channel);
+      }
+    };
   }, []);
 
-  const initUser = async () => {
+const initUser = async () => {
+  try {
     setLoading(true);
 
-    const { data } = await supabase.auth.getUser();
+    const { data, error } = await supabase.auth.getUser();
 
-    if (!data.user) {
+    if (error || !data.user) {
       router.replace("/login");
       return;
     }
 
-    setUser({ email: data.user.email });
+    const currentUser = data.user;
+
+    setUser({ email: currentUser.email });
+
+    // ✅ Fetch tickets (ONLY what you need)
+    const { data: ticketData, error: ticketError } = await supabase
+      .from("tickets")
+      .select("id, title, status, created_at")
+      .eq("user_id", currentUser.id)
+      .order("created_at", { ascending: false });
+
+    if (ticketError) {
+      console.error("Ticket fetch error:", ticketError);
+      return;
+    }
+
+    const tickets = ticketData || [];
+
+    setTickets(tickets);
+
+    // ✅ Compute stats
+    const statsData = {
+      total: tickets.length,
+      open: tickets.filter(t => t.status === "Open").length,
+      inProgress: tickets.filter(t => t.status === "In Progress").length,
+      resolved: tickets.filter(t => t.status === "Resolved").length,
+    };
+
+    setStats(statsData);
+
+  } catch (err) {
+    console.error("Dashboard error:", err);
+  } finally {
     setLoading(false);
-  };
+  }
+};
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -56,8 +128,17 @@ export default function DashboardPage() {
   const refreshDashboard = async () => {
     setRefreshing(true);
     await initUser();
-    setTimeout(() => setRefreshing(false), 500);
+    setRefreshing(false);
   };
+
+  const [stats, setStats] = useState({
+  total: 0,
+  open: 0,
+  inProgress: 0,
+  resolved: 0,
+});
+
+  const [tickets, setTickets] = useState<any[]>([]);
 
   /* ================= LOADING SKELETON ================= */
   if (loading) {
@@ -200,7 +281,13 @@ export default function DashboardPage() {
         {/* QUICK ACTIONS */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
 
-          <ActionCard icon={<Plus />} title="Create Ticket" desc="Submit a new issue" />
+          <div onClick={() => router.push("/create-ticket")}>
+            <ActionCard
+              icon={<Plus />}
+              title="Create Ticket"
+              desc="Submit a new issue"
+            />
+          </div>
           <ActionCard icon={<Ticket />} title="View Tickets" desc="Check status updates" />
 
         </div>
@@ -208,26 +295,104 @@ export default function DashboardPage() {
         {/* STATS */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
 
-          <StatCard icon={<Ticket />} title="Total" value="128" />
-          <StatCard icon={<AlertCircle />} title="Open" value="32" />
-          <StatCard icon={<Clock />} title="In Progress" value="18" />
-          <StatCard icon={<CheckCircle />} title="Resolved" value="78" />
+        <StatCard icon={<Ticket />} title="Total" value={stats.total} />
+        <StatCard icon={<AlertCircle />} title="Open" value={stats.open} />
+        <StatCard icon={<Clock />} title="In Progress" value={stats.inProgress} />
+        <StatCard icon={<CheckCircle />} title="Resolved" value={stats.resolved} />
 
         </div>
 
-        {/* RECENT (IMPROVED) */}
         <div className="mt-8 bg-white/60 backdrop-blur-xl border border-gray-200 rounded-2xl p-5">
 
-          <h3 className="font-semibold mb-4">Recent Tickets</h3>
+        {/* HEADER */}
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="ml-1 font-semibold">Recent Tickets</h3>
 
-          <div className="space-y-3">
-
-            <TicketRow status="Open" title="WiFi not working in Lab 2" />
-            <TicketRow status="In Progress" title="Printer issue in Office" />
-            <TicketRow status="Resolved" title="Email access restored" />
-
-          </div>
+          <button
+            onClick={() => router.push("/tickets")}
+            className="text-xs mr-2.5 text-gray-600 hover:text-black transition"
+          >
+            View all
+          </button>
         </div>
+
+        <div className="space-y-2">
+
+          {tickets.length === 0 ? (
+            <div className="text-center py-10">
+              <p className="text-sm text-gray-500">No tickets yet</p>
+              <p className="text-xs text-gray-400 mt-1">
+                Create your first ticket to get started
+              </p>
+            </div>
+          ) : (
+            tickets.slice(0, 5).map((t) => {
+
+              const statusStyle =
+                t.status === "Open"
+                  ? "bg-red-100 text-red-600"
+                  : t.status === "In Progress"
+                  ? "bg-yellow-100 text-yellow-700"
+                  : "bg-green-100 text-green-700";
+
+              const timeAgo = new Date(t.created_at).toLocaleDateString(undefined, {
+                month: "short",
+                day: "numeric",
+              });
+
+              return (
+                <div
+                  key={t.id}
+                  onClick={() => router.push(`/tickets/${t.id}`)}
+                  className="group flex items-center justify-between p-4 rounded-xl bg-white/40 hover:bg-white/70 transition cursor-pointer border border-gray-100"
+                >
+
+                  {/* LEFT */}
+                  <div className="flex flex-col gap-1">
+
+                    <div className="flex items-center gap-2">
+
+                      {/* small status dot */}
+                      <span
+                        className={`w-2 h-2 rounded-full ${
+                          t.status === "Open"
+                            ? "bg-red-500"
+                            : t.status === "In Progress"
+                            ? "bg-yellow-500"
+                            : "bg-green-500"
+                        }`}
+                      />
+
+                      <span className="text-sm font-medium text-gray-800 group-hover:text-black">
+                        {t.title}
+                      </span>
+
+                    </div>
+
+                    <div className="text-xs text-gray-400 flex items-center gap-2">
+                      <span>Created {timeAgo}</span>
+                      <span>•</span>
+                      <span>ID: #{t.id.slice(0, 6)}</span>
+                    </div>
+
+                  </div>
+
+                  {/* RIGHT */}
+                  <div className="flex items-center gap-2">
+
+                    <span className={`text-xs font-medium px-3 py-1 rounded-full ${statusStyle}`}>
+                      {t.status}
+                    </span>
+
+                  </div>
+
+                </div>
+              );
+            })
+          )}
+
+        </div>
+      </div>
 
       </main>
     </div>
