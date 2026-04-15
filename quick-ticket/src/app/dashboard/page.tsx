@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useRouter, usePathname } from "next/navigation";
 import {
-  LayoutDashboard,
+  House,
   Ticket,
   Clock,
   CheckCircle,
@@ -15,10 +15,12 @@ import {
   User,
   Plus,
   RefreshCcw,
+  ClipboardList
 } from "lucide-react";
 
 type UserType = {
   email?: string;
+  avatar_url?: string;
 };
 
 export default function DashboardPage() {
@@ -29,6 +31,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [view, setView] = useState("home");
 
   useEffect(() => {
     let channel: any;
@@ -85,7 +88,13 @@ const initUser = async () => {
 
     const currentUser = data.user;
 
-    setUser({ email: currentUser.email });
+    // OPTIONAL: if you store avatar in user_metadata
+    const avatar = currentUser.user_metadata?.avatar_url || null;
+
+    setUser({
+      email: currentUser.email,
+      avatar_url: avatar,
+    });
 
     // ✅ Fetch tickets (ONLY what you need)
     const { data: ticketData, error: ticketError } = await supabase
@@ -103,11 +112,11 @@ const initUser = async () => {
 
     setTickets(tickets);
 
-    // ✅ Compute stats
     const statsData = {
-      total: tickets.length,
+      closed: tickets.length, // ALL tickets in system
       open: tickets.filter(t => t.status === "Open").length,
-      inProgress: tickets.filter(t => t.status === "In Progress").length,
+      inProgress: tickets.filter(t => t.status === "Work in Progress" || t.status === "In Progress").length,
+      onHold: tickets.filter(t => t.status === "On Hold").length,
       resolved: tickets.filter(t => t.status === "Resolved").length,
     };
 
@@ -132,11 +141,12 @@ const initUser = async () => {
   };
 
   const [stats, setStats] = useState({
-  total: 0,
-  open: 0,
-  inProgress: 0,
-  resolved: 0,
-});
+    closed: 0,
+    open: 0,
+    inProgress: 0,
+    onHold: 0,
+    resolved: 0,
+  });
 
   const [tickets, setTickets] = useState<any[]>([]);
 
@@ -195,19 +205,59 @@ const initUser = async () => {
       {/* GLOW */}
       <div className="absolute w-[500px] h-[500px] bg-black/5 blur-3xl rounded-full -z-10 top-10 left-10" />
 
-      {/* SIDEBAR */}
-      <aside className="hidden md:flex w-64 flex-col p-6 bg-white/60 backdrop-blur-xl border-r border-gray-200">
+      <aside className="hidden md:flex w-20 flex-col justify-between py-6 bg-[#0f172a] text-gray-300 border-r border-gray-800">
 
-        <h1 className="text-2xl font-semibold mb-8 tracking-tight">
-          QuickTicket
-        </h1>
+      {/* TOP SECTION */}
+      <div className="flex flex-col items-center">
 
-        <nav className="flex flex-col gap-2 text-sm">
-          <NavItem icon={<LayoutDashboard size={16} />} label="Dashboard" active />
-          <NavItem icon={<Ticket size={16} />} label="Tickets" />
-          <NavItem icon={<User size={16} />} label="Profile" />
+        {/* AVATAR */}
+        <div className="mb-10 relative group cursor-pointer" title={user?.email}>
+          {user?.avatar_url ? (
+            <div className="relative">
+              <img
+                src={user.avatar_url}
+                className="w-11 h-11 rounded-full object-cover border border-gray-600 group-hover:scale-105 transition"
+              />
+              <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 rounded-full border border-gray-900" />
+            </div>
+          ) : (
+            <div className="relative w-11 h-11">
+              <div className="w-full h-full flex items-center justify-center rounded-full bg-gray-600 text-white text-sm font-semibold">
+                {user?.email?.charAt(0).toUpperCase()}
+              </div>
+              <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 rounded-full border border-gray-900" />
+            </div>
+          )}
+        </div>
+
+        {/* NAV */}
+        <nav className="flex flex-col items-center gap-6">
+
+          <SideIcon icon={<House size={18} />} label="Home" active={view === "home"} onClick={() => setView("home")} />
+
+          <SideIcon icon={<ClipboardList size={18} />} label="Requests" active={view === "requests"} onClick={() => setView("requests")} />
+
+          <SideIcon icon={<AlertCircle size={18} />} label="Reports" active={view === "reports"} onClick={() => setView("reports")} />
+
+          <SideIcon icon={<Ticket size={18} />} label="Tickets" active={view === "tickets"} onClick={() => setView("tickets")} />
+
+          <SideIcon icon={<User size={18} />} label="Profile" active={view === "profile"} onClick={() => setView("profile")} />
+          
         </nav>
-      </aside>
+      </div>
+
+      {/* BOTTOM SECTION */}
+      <div className="flex flex-col items-center gap-2">
+        <button
+          onClick={handleLogout}
+          className="p-3 rounded-xl text-gray-400 hover:text-red-400 hover:bg-red-500/10 transition"
+        >
+          <LogOut size={18} />
+        </button>
+        <span className="text-[10px] text-gray-500">Logout</span>
+      </div>
+
+    </aside>
 
       {/* MOBILE MENU */}
       {mobileMenuOpen && (
@@ -222,184 +272,80 @@ const initUser = async () => {
             </div>
 
             <div className="flex flex-col gap-2 text-sm">
-              <NavItem icon={<LayoutDashboard size={16} />} label="Dashboard" active />
-              <NavItem icon={<Ticket size={16} />} label="Tickets" />
-              <NavItem icon={<User size={16} />} label="Profile" />
+
+              <NavItem icon={<House size={16} />} label="Dashboard" active={view === "home"} onClick={() => setView("home")} />
+
+              <NavItem icon={<Ticket size={16} />} label="Tickets" active={view === "tickets"} onClick={() => setView("tickets")} />
+
+              <NavItem icon={<User size={16} />} label="Profile" active={view === "profile"} onClick={() => setView("profile")} />
+              
             </div>
           </div>
         </div>
       )}
 
-      {/* MAIN */}
-      <main className="flex-1 p-4 sm:p-6 md:p-8">
+<main className="flex-1 p-6 sm:p-6 md:p-10 relative">
+  
+  {view === "home" && (
+    <DashboardHome
+      user={user}
+      stats={stats}
+      tickets={tickets}
+    />
+  )}
 
-        {/* TOP BAR (IMPROVED) */}
-        <div className="flex justify-between items-center mb-6">
+  {view === "requests" && <RequestsPage />}
 
-          <button
-            className="md:hidden p-2 rounded-lg bg-white/60 border border-gray-200"
-            onClick={() => setMobileMenuOpen(true)}
-          >
-            <Menu size={18} />
-          </button>
+  {view === "reports" && <ReportsPage tickets={tickets ?? []} />}
 
-          <div>
-            <h2 className="text-xl sm:text-2xl font-semibold">
-              Dashboard
-            </h2>
+  {view === "tickets" && <TicketsPage tickets={tickets ?? []} />}
 
-            <p className="text-xs sm:text-sm text-gray-500">
-              Welcome back, {user?.email}
-            </p>
-          </div>
+  {view === "profile" && <ProfilePage user={user ?? undefined} />}
 
-          {/* CLEAN ACTION BUTTONS */}
-          <div className="flex items-center gap-2">
-
-            <button
-              onClick={refreshDashboard}
-              className="flex items-center gap-2 text-sm px-3 py-2 rounded-xl bg-white/70 border hover:bg-white transition"
-            >
-              <RefreshCcw
-                size={14}
-                className={refreshing ? "animate-spin" : ""}
-              />
-              Refresh
-            </button>
-
-            <button
-              onClick={handleLogout}
-              className="flex items-center gap-2 text-sm px-3 py-2 rounded-xl bg-black text-white hover:opacity-90 transition"
-            >
-              <LogOut size={14} />
-              Logout
-            </button>
-
-          </div>
-        </div>
-
-        {/* QUICK ACTIONS */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
-
-          <div onClick={() => router.push("/create-ticket")}>
-            <ActionCard
-              icon={<Plus />}
-              title="Create Ticket"
-              desc="Submit a new issue"
-            />
-          </div>
-          <ActionCard icon={<Ticket />} title="View Tickets" desc="Check status updates" />
-
-        </div>
-
-        {/* STATS */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-
-        <StatCard icon={<Ticket />} title="Total" value={stats.total} />
-        <StatCard icon={<AlertCircle />} title="Open" value={stats.open} />
-        <StatCard icon={<Clock />} title="In Progress" value={stats.inProgress} />
-        <StatCard icon={<CheckCircle />} title="Resolved" value={stats.resolved} />
-
-        </div>
-
-        <div className="mt-8 bg-white/60 backdrop-blur-xl border border-gray-200 rounded-2xl p-5">
-
-        {/* HEADER */}
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="ml-1 font-semibold">Recent Tickets</h3>
-
-          <button
-            onClick={() => router.push("/tickets")}
-            className="text-xs mr-2.5 text-gray-600 hover:text-black transition"
-          >
-            View all
-          </button>
-        </div>
-
-        <div className="space-y-2">
-
-          {tickets.length === 0 ? (
-            <div className="text-center py-10">
-              <p className="text-sm text-gray-500">No tickets yet</p>
-              <p className="text-xs text-gray-400 mt-1">
-                Create your first ticket to get started
-              </p>
-            </div>
-          ) : (
-            tickets.slice(0, 5).map((t) => {
-
-              const statusStyle =
-                t.status === "Open"
-                  ? "bg-red-100 text-red-600"
-                  : t.status === "In Progress"
-                  ? "bg-yellow-100 text-yellow-700"
-                  : "bg-green-100 text-green-700";
-
-              const timeAgo = new Date(t.created_at).toLocaleDateString(undefined, {
-                month: "short",
-                day: "numeric",
-              });
-
-              return (
-                <div
-                  key={t.id}
-                  onClick={() => router.push(`/tickets/${t.id}`)}
-                  className="group flex items-center justify-between p-4 rounded-xl bg-white/40 hover:bg-white/70 transition cursor-pointer border border-gray-100"
-                >
-
-                  {/* LEFT */}
-                  <div className="flex flex-col gap-1">
-
-                    <div className="flex items-center gap-2">
-
-                      {/* small status dot */}
-                      <span
-                        className={`w-2 h-2 rounded-full ${
-                          t.status === "Open"
-                            ? "bg-red-500"
-                            : t.status === "In Progress"
-                            ? "bg-yellow-500"
-                            : "bg-green-500"
-                        }`}
-                      />
-
-                      <span className="text-sm font-medium text-gray-800 group-hover:text-black">
-                        {t.title}
-                      </span>
-
-                    </div>
-
-                    <div className="text-xs text-gray-400 flex items-center gap-2">
-                      <span>Created {timeAgo}</span>
-                      <span>•</span>
-                      <span>ID: #{t.id.slice(0, 6)}</span>
-                    </div>
-
-                  </div>
-
-                  {/* RIGHT */}
-                  <div className="flex items-center gap-2">
-
-                    <span className={`text-xs font-medium px-3 py-1 rounded-full ${statusStyle}`}>
-                      {t.status}
-                    </span>
-
-                  </div>
-
-                </div>
-              );
-            })
-          )}
-
-        </div>
-      </div>
-
-      </main>
+</main>
     </div>
   );
 }
 
 /* ================= COMPONENTS ================= */
+
+function SideIcon({ icon, label, active, onClick }: any) {
+  return (
+    <button
+      onClick={onClick}
+      className="relative flex flex-col items-center gap-1 group"
+    >
+      {/* ACTIVE LEFT BAR */}
+      {active && (
+        <span className="absolute -left-3 w-0.5 h-11 bg-white rounded-r-full" />
+      )}
+
+      {/* ICON */}
+      <div
+        className={`p-3 rounded-xl transition-all duration-200
+        ${
+          active
+            ? "bg-white text-black shadow-md scale-105"
+            : "text-gray-400 group-hover:text-white group-hover:bg-gray-700/60 group-hover:shadow-lg"
+        }`}
+      >
+        {icon}
+      </div>
+
+      {/* LABEL */}
+      <span
+        className={`text-[10px] transition-all
+        ${
+          active
+            ? "text-white font-medium"
+            : "text-gray-500 group-hover:text-gray-200"
+        }`}
+      >
+        {label}
+      </span>
+    </button>
+  );
+}
 
 function NavItem({ icon, label, active }: any) {
   return (
@@ -455,6 +401,107 @@ function TicketRow({ title, status }: any) {
         {status}
       </span>
 
+    </div>
+  );
+}
+
+/* ================= PAGE COMPONENTS ================= */
+
+function DashboardHome({ user, stats, tickets }: any) {
+  const safeStats = stats ?? {
+    closed: 0,
+    open: 0,
+    inProgress: 0,
+    onHold: 0,
+    resolved: 0,
+  };
+
+  const safeTickets = tickets ?? [];
+
+  return (
+    <div>
+      <h1 className="text-2xl font-bold mb-4">
+        Welcome, {user?.email}
+      </h1>
+
+      {/* STATS */}
+      <div className="grid grid-cols-5 gap-4 mb-6">
+        <StatCard title="Open" value={safeStats.open} />
+        <StatCard title="Work in Progress" value={safeStats.inProgress} />
+        <StatCard title="On Hold" value={safeStats.onHold} />
+        <StatCard title="Resolved" value={safeStats.resolved} />
+        <StatCard title="Closed" value={safeStats.closed} />
+      </div>
+
+      {/* RECENT TICKETS */}
+      <div className="bg-white/60 p-4 rounded-xl border">
+        <h2 className="font-semibold mb-3">Recent Tickets</h2>
+
+        {safeTickets.length === 0 ? (
+          <p className="text-gray-500 text-sm">No tickets yet</p>
+        ) : (
+          safeTickets.slice(0, 5).map((t: any) => (
+            <TicketRow
+              key={t.id}
+              title={t.title}
+              status={t.status}
+            />
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function RequestsPage() {
+  return (
+    <div>
+      <h1 className="text-xl font-bold">Requests</h1>
+      <p className="text-gray-500 text-sm mt-2">
+        This is where user requests will appear.
+      </p>
+    </div>
+  );
+}
+
+function ReportsPage({ tickets }: any) {
+  return (
+    <div>
+      <h1 className="text-xl font-bold">Reports</h1>
+
+      <p className="text-gray-500 text-sm mt-2">
+        Total tickets: {tickets.length}
+      </p>
+    </div>
+  );
+}
+
+function TicketsPage({ tickets }: any) {
+  return (
+    <div>
+      <h1 className="text-xl font-bold mb-3">All Tickets</h1>
+
+      <div className="space-y-2">
+        {tickets.map((t: any) => (
+          <TicketRow
+            key={t.id}
+            title={t.title}
+            status={t.status}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ProfilePage({ user }: any) {
+  return (
+    <div>
+      <h1 className="text-xl font-bold">Profile</h1>
+
+      <div className="mt-3 bg-white p-4 rounded-xl">
+        <p>Email: {user?.email}</p>
+      </div>
     </div>
   );
 }
