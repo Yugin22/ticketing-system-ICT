@@ -205,6 +205,7 @@ export default function AdminDashboard() {
 
   // Chart Data: SLA by Category
   const categoryData = useMemo(() => {
+    if (!now) return [];
     const counts: Record<string, { approaching: number; violated: number }> = {};
     tickets.forEach(t => {
       const cat = t.request_type || "Incident";
@@ -261,8 +262,8 @@ export default function AdminDashboard() {
           </div>
 
           <nav className="flex-1 space-y-2">
-            <NavItem icon={<LayoutDashboard size={18} />} label="Analytics" active onClick={() => { }} />
-            <NavItem icon={<Ticket size={18} />} label="All Tickets" onClick={() => { }} />
+            <NavItem icon={<LayoutDashboard size={18} />} label="Analytics" active onClick={() => router.push("/admin")} />
+            <NavItem icon={<Ticket size={18} />} label="All Tickets" onClick={() => router.push("/admin/tickets")} />
             <NavItem icon={<Activity size={18} />} label="Service Health" onClick={() => { }} />
             <NavItem icon={<Calendar size={18} />} label="Schedules" onClick={() => { }} />
           </nav>
@@ -355,7 +356,9 @@ export default function AdminDashboard() {
                     dataKey="value"
                     onClick={(data) => {
                       // Filter by mode if applicable
-                      setSearch(data.name);
+                      if (data && data.name) {
+                        setSearch(data.name);
+                      }
                     }}
                   >
                     {modeData.map((entry, index) => (
@@ -399,14 +402,22 @@ export default function AdminDashboard() {
                     dataKey="approaching"
                     fill="#ffd95a"
                     radius={[4, 4, 0, 0]}
-                    onClick={(data) => setSearch(data.name)}
+                    onClick={(data) => {
+                      if (data && data.name) {
+                        setSearch(data.name);
+                      }
+                    }}
                     className="cursor-pointer transition-opacity hover:opacity-80"
                   />
                   <Bar
                     dataKey="violated"
                     fill="#dc2626"
                     radius={[4, 4, 0, 0]}
-                    onClick={(data) => setSearch(data.name)}
+                    onClick={(data) => {
+                      if (data && data.name) {
+                        setSearch(data.name);
+                      }
+                    }}
                     className="cursor-pointer transition-opacity hover:opacity-80"
                   />
                 </BarChart>
