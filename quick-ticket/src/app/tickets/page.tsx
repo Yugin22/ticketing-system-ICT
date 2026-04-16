@@ -4,13 +4,14 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Ticket, Send, ArrowLeft, Loader2, CheckCircle2, Clock, CircleDot, ChevronDown } from "lucide-react";
+import { Ticket, Send, ArrowLeft, Loader2, CheckCircle2, Clock, CircleDot, ChevronDown, AlertTriangle } from "lucide-react";
 
 type TicketType = {
-    id: string;
+    id: string | number;
     title: string;
     description: string;
     status: string;
+    request_type?: string;
     created_at: string;
 };
 
@@ -31,6 +32,7 @@ export default function TicketsFormPage() {
     const [title, setTitle] = useState("");
     const [description, setDescription] = useState("");
     const status = "Open"; // Automatically open and not editable
+    const requestType = "Incident"; // Automatically Incident and not editable
 
     useEffect(() => {
         initPage();
@@ -240,17 +242,32 @@ export default function TicketsFormPage() {
 
                             <div className="flex flex-col">
                                 <label className="text-[11px] sm:text-xs font-semibold uppercase tracking-wider mb-2 text-[#8c9bba]">
+                                    Request Type
+                                </label>
+                                <div className="relative">
+                                    <input
+                                        type="text"
+                                        value={requestType}
+                                        disabled
+                                        className="w-full p-4 appearance-none rounded-2xl outline-none transition-all text-black text-sm font-medium bg-[#DDD9F9] border border-[#e8ecf2] cursor-not-allowed"
+                                    />
+                                    <AlertTriangle size={18} className="absolute right-4 top-1/2 -translate-y-1/2 text-black opacity-60 pointer-events-none" />
+                                </div>
+                            </div>
+
+                            <div className="flex flex-col">
+                                <label className="text-[11px] sm:text-xs font-semibold uppercase tracking-wider mb-2 text-[#8c9bba]">
                                     Current Status
                                 </label>
                                 <div className="relative">
                                     <select
                                         value={status}
                                         disabled
-                                        className="w-full p-4 appearance-none rounded-2xl outline-none transition-all text-black text-sm font-medium bg-[#ffd1d1ff] text-[#8c9bba] border border-[#e8ecf2] cursor-not-allowed"
+                                        className="w-full p-4 appearance-none rounded-2xl outline-none transition-all text-black text-sm font-medium bg-[#DDD9F9] border border-[#e8ecf2] cursor-not-allowed"
                                     >
                                         <option value="Open">Open</option>
                                     </select>
-                                    <CircleDot size={18} className="absolute right-4 top-1/2 -translate-y-1/2 text-[#8c9bba] opacity-60 pointer-events-none" />
+                                    <CircleDot size={18} className="absolute right-4 top-1/2 -translate-y-1/2 text-black opacity-60 pointer-events-none" />
                                 </div>
                             </div>
 
@@ -285,7 +302,7 @@ export default function TicketsFormPage() {
                             <button
                                 type="submit"
                                 disabled={submitting}
-                                className="w-full sm:w-auto px-8 py-3.5 rounded-2xl font-semibold text-sm text-white transition-all hover:scale-101 active:scale-95 flex items-center justify-center gap-2 bg-[#1a2744] shadow-[0_8px_20px_-6px_rgba(26,39,68,0.5)] disabled:opacity-70 disabled:hover:scale-100 hover:bg-[#0e12ffff]"
+                                className="w-full sm:w-auto px-8 py-3.5 rounded-2xl font-semibold text-sm text-white transition-all active:scale-95 flex items-center justify-center gap-2 bg-[#1a2744] shadow-[0_8px_20px_-6px_rgba(26,39,68,0.5)] disabled:opacity-70 disabled:hover:scale-100 hover:bg-[#0e12ffff]"
                             >
                                 {submitting ? (
                                     <>
@@ -332,7 +349,7 @@ export default function TicketsFormPage() {
                             ) : (
                                 <div className="flex flex-col gap-2">
                                     {tickets.map(t => (
-                                        <Link href="/dashboard" key={t.id} className="block p-4 sm:p-5 rounded-2xl hover:bg-[#f8f9fc] transition-all border border-transparent hover:border-[#e8ecf2] hover:shadow-sm group">
+                                        <Link href={`/tickets/${t.id}`} key={t.id} className="block p-4 sm:p-5 rounded-2xl hover:bg-[#f8f9fc] transition-all border border-transparent hover:border-[#e8ecf2] hover:shadow-sm group">
                                             <div className="flex flex-col gap-2.5">
                                                 <div className="flex items-start justify-between gap-3">
                                                     <h3 className="text-sm font-bold text-[#1a2744] truncate group-hover:text-[#0e12ffff] transition-colors">
