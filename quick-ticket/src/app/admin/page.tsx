@@ -16,15 +16,13 @@ import {
   Calendar,
   MoreVertical,
   ChevronRight,
-  PieChart as PieChartIcon,
-  BarChart3,
-  Activity,
-  ArrowUpRight,
-  Menu,
-  X,
-  Shield,
   CircleDot,
-  PauseCircle
+  PauseCircle,
+  HelpCircle,
+  Shield,
+  Activity,
+  Menu,
+  X
 } from "lucide-react";
 import {
   PieChart,
@@ -36,12 +34,7 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  Legend,
   ResponsiveContainer,
-  ComposedChart,
-  Line,
-  AreaChart,
-  Area
 } from "recharts";
 
 /* ---------------- TYPES ---------------- */
@@ -68,6 +61,9 @@ const STATUS_COLORS: Record<string, string> = {
   "Closed": "#1a2744",
 };
 
+const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
+const TWO_DAYS_MS = 2 * 24 * 60 * 60 * 1000;
+
 /* ---------------- PAGE ---------------- */
 
 export default function AdminDashboard() {
@@ -80,10 +76,18 @@ export default function AdminDashboard() {
   const [search, setSearch] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
-  // Stats Logic:
-  const now = new Date();
-  const currentMonth = now.getMonth();
-  const currentYear = now.getFullYear();
+  const [now, setNow] = useState<Date | null>(null);
+
+  // Set 'now' only on client to prevent hydration mismatch
+  useEffect(() => {
+    setNow(new Date());
+    // Update every minute for real-time SLA accuracy
+    const interval = setInterval(() => setNow(new Date()), 60000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const currentMonth = (now || new Date()).getMonth();
+  const currentYear = (now || new Date()).getFullYear();
 
   /* ---------------- AUTH GUARD ---------------- */
 
@@ -123,34 +127,37 @@ export default function AdminDashboard() {
   /* ---------------- DATA AGGREGATION ---------------- */
 
   const stats = useMemo(() => {
+    const checkStatus = (status: string, target: string) =>
+      status?.toLowerCase().trim() === target.toLowerCase();
+
     const allTime = {
-      open: tickets.filter(t => t.status === "Open").length,
-      wip: tickets.filter(t => t.status === "Work in Progress" || t.status === "In Progress").length,
-      onHold: tickets.filter(t => t.status === "On Hold").length,
-      resolved: tickets.filter(t => t.status === "Resolved").length,
-      closed: tickets.filter(t => t.status === "Closed").length,
+      open: tickets.filter(t => checkStatus(t.status, "Open")).length,
+      wip: tickets.filter(t => checkStatus(t.status, "Work in Progress") || checkStatus(t.status, "In Progress")).length,
+      onHold: tickets.filter(t => checkStatus(t.status, "On Hold")).length,
+      resolved: tickets.filter(t => checkStatus(t.status, "Resolved")).length,
+      closed: tickets.filter(t => checkStatus(t.status, "Closed")).length,
     };
 
     const monthly = {
       open: tickets.filter(t => {
         const d = new Date(t.created_at);
-        return d.getMonth() === currentMonth && d.getFullYear() === currentYear && t.status === "Open";
+        return d.getMonth() === currentMonth && d.getFullYear() === currentYear && checkStatus(t.status, "Open");
       }).length,
       wip: tickets.filter(t => {
         const d = new Date(t.created_at);
-        return d.getMonth() === currentMonth && d.getFullYear() === currentYear && (t.status === "Work in Progress" || t.status === "In Progress");
+        return d.getMonth() === currentMonth && d.getFullYear() === currentYear && (checkStatus(t.status, "Work in Progress") || checkStatus(t.status, "In Progress"));
       }).length,
       onHold: tickets.filter(t => {
         const d = new Date(t.created_at);
-        return d.getMonth() === currentMonth && d.getFullYear() === currentYear && t.status === "On Hold";
+        return d.getMonth() === currentMonth && d.getFullYear() === currentYear && checkStatus(t.status, "On Hold");
       }).length,
       resolved: tickets.filter(t => {
         const d = new Date(t.created_at);
-        return d.getMonth() === currentMonth && d.getFullYear() === currentYear && t.status === "Resolved";
+        return d.getMonth() === currentMonth && d.getFullYear() === currentYear && checkStatus(t.status, "Resolved");
       }).length,
       closed: tickets.filter(t => {
         const d = new Date(t.created_at);
-        return d.getMonth() === currentMonth && d.getFullYear() === currentYear && t.status === "Closed";
+        return d.getMonth() === currentMonth && d.getFullYear() === currentYear && checkStatus(t.status, "Closed");
       }).length,
     };
 
@@ -159,42 +166,41 @@ export default function AdminDashboard() {
 
   // SLA Violation Logic (Created_at + 3 days)
   const slaStats = useMemo(() => {
-    const threeDaysMs = 3 * 24 * 60 * 60 * 1000;
+    if (!now) return { violated: 0, approaching: 0 };
+
+    const checkStatus = (status: string, target: string) =>
+      status?.toLowerCase().trim() === target.toLowerCase();
+
     const violated = tickets.filter(t => {
-      if (t.status === "Resolved" || t.status === "Closed") return false;
+      if (checkStatus(t.status, "Resolved") || checkStatus(t.status, "Closed")) return false;
       const created = new Date(t.created_at).getTime();
-      return (now.getTime() - created) > threeDaysMs;
+      return (now.getTime() - created) > THREE_DAYS_MS;
     }).length;
 
     const approaching = tickets.filter(t => {
-      if (t.status === "Resolved" || t.status === "Closed") return false;
+      if (checkStatus(t.status, "Resolved") || checkStatus(t.status, "Closed")) return false;
       const created = new Date(t.created_at).getTime();
       const diff = now.getTime() - created;
-      // Between 2 and 3 days
-      return diff > (twoDaysMs = 2 * 24 * 60 * 60 * 1000) && diff <= threeDaysMs;
+      return diff > TWO_DAYS_MS && diff <= THREE_DAYS_MS;
     }).length;
 
     return { violated, approaching };
-  }, [tickets]);
-  var twoDaysMs; // helper for hoist
+  }, [tickets, now]);
 
-  // Chart Data: Mode distribution (Mocked if empty)
+  // Chart Data: Mode distribution
   const modeData = useMemo(() => {
     const counts: Record<string, number> = {};
     tickets.forEach(t => {
       const mode = t.mode || "Portal";
       counts[mode] = (counts[mode] || 0) + 1;
     });
-    // Add some mock data if too empty for visual impact
-    if (Object.keys(counts).length < 2) {
-      return [
-        { name: "E-Mail", value: 14 },
-        { name: "Self Service Portal", value: 51 },
-        { name: "Request Letter", value: 5 },
-        { name: "Assigned by ICT Head", value: 1 },
-      ];
-    }
-    return Object.entries(counts).map(([name, value]) => ({ name, value }));
+    const entries = Object.entries(counts).map(([name, value]) => ({ name, value }));
+    return entries.length >= 2 ? entries : [
+      { name: "E-Mail", value: 14 },
+      { name: "Portal", value: 51 },
+      { name: "Letter", value: 5 },
+      { name: "Direct", value: 1 },
+    ];
   }, [tickets]);
 
   // Chart Data: SLA by Category
@@ -203,26 +209,23 @@ export default function AdminDashboard() {
     tickets.forEach(t => {
       const cat = t.request_type || "Incident";
       if (!counts[cat]) counts[cat] = { approaching: 0, violated: 0 };
-      
+
       const created = new Date(t.created_at).getTime();
       const diff = now.getTime() - created;
       if (t.status !== "Resolved" && t.status !== "Closed") {
-          if (diff > 3 * 24 * 60 * 60 * 1000) counts[cat].violated++;
-          else if (diff > 2 * 24 * 60 * 60 * 1000) counts[cat].approaching++;
+        if (diff > THREE_DAYS_MS) counts[cat].violated++;
+        else if (diff > TWO_DAYS_MS) counts[cat].approaching++;
       }
     });
 
-    // Mock data for visual fidelity if needed
-    if (tickets.length < 5) {
-      return [
-          { name: "Hardware", approaching: 2, violated: 4 },
-          { name: "Software", approaching: 1, violated: 1 },
-          { name: "Networking", approaching: 5, violated: 7 },
-          { name: "Accounts", approaching: 1, violated: 20 },
-      ];
-    }
-    return Object.entries(counts).map(([name, stats]) => ({ name, ...stats }));
-  }, [tickets]);
+    const entries = Object.entries(counts).map(([name, stats]) => ({ name, ...stats }));
+    return entries.length >= 2 ? entries : [
+      { name: "Hardware", approaching: 2, violated: 4 },
+      { name: "Software", approaching: 1, violated: 1 },
+      { name: "Networking", approaching: 5, violated: 7 },
+      { name: "Accounts", approaching: 1, violated: 20 },
+    ];
+  }, [tickets, now]);
 
   /* ---------------- FILTERING ---------------- */
 
@@ -258,10 +261,10 @@ export default function AdminDashboard() {
           </div>
 
           <nav className="flex-1 space-y-2">
-            <NavItem icon={<LayoutDashboard size={18} />} label="Analytics" active onClick={() => {}} />
-            <NavItem icon={<Ticket size={18} />} label="All Tickets" onClick={() => {}} />
-            <NavItem icon={<Activity size={18} />} label="Service Health" onClick={() => {}} />
-            <NavItem icon={<Calendar size={18} />} label="Schedules" onClick={() => {}} />
+            <NavItem icon={<LayoutDashboard size={18} />} label="Analytics" active onClick={() => { }} />
+            <NavItem icon={<Ticket size={18} />} label="All Tickets" onClick={() => { }} />
+            <NavItem icon={<Activity size={18} />} label="Service Health" onClick={() => { }} />
+            <NavItem icon={<Calendar size={18} />} label="Schedules" onClick={() => { }} />
           </nav>
 
           <div className="mt-auto pt-6 border-t border-[#e8ecf2]">
@@ -277,7 +280,7 @@ export default function AdminDashboard() {
 
       {/* MAIN CONTENT */}
       <main className="flex-1 overflow-x-hidden">
-        
+
         {/* TOP BAR */}
         <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md border-b border-[#e8ecf2] px-4 sm:px-8 py-4 flex items-center justify-between">
           <div className="flex items-center gap-4">
@@ -289,14 +292,14 @@ export default function AdminDashboard() {
 
           <div className="flex items-center gap-4">
             <button
-               onClick={fetchTickets}
-               disabled={refreshing}
-               className="flex items-center gap-2 bg-[#f0f3f8] text-[#1a2744] hover:bg-[#e8ecf2] px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all active:scale-95 disabled:opacity-50"
+              onClick={fetchTickets}
+              disabled={refreshing}
+              className="flex items-center gap-2 bg-[#f0f3f8] text-[#1a2744] hover:bg-[#e8ecf2] px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all active:scale-95 disabled:opacity-50"
             >
               <RefreshCcw size={14} className={refreshing ? "animate-spin" : ""} />
               <span className="hidden sm:inline">Refresh Data</span>
             </button>
-            
+
             <div className="w-10 h-10 rounded-full bg-[#1a2744] flex items-center justify-center text-white text-xs font-bold border-4 border-[#DDD9F9]">
               AD
             </div>
@@ -308,8 +311,8 @@ export default function AdminDashboard() {
           {/* SUMMARY 1: ALL TICKETS */}
           <section>
             <div className="flex flex-col mb-4">
-                <span className="text-[10px] uppercase font-black tracking-widest text-[#8c9bba]">Request Status Summary (all)</span>
-                <h3 className="text-lg font-bold">ICT Tickets - All Time</h3>
+              <span className="text-[10px] uppercase font-black tracking-widest text-[#8c9bba]">Request Status Summary (all)</span>
+              <h3 className="text-lg font-bold">ICT Tickets - All Time</h3>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
               <MetricStat label="Open" value={stats.allTime.open} color="#e91e1eff" onClick={() => setFilter("open")} />
@@ -323,8 +326,8 @@ export default function AdminDashboard() {
           {/* SUMMARY 2: CURRENT MONTH */}
           <section>
             <div className="flex flex-col mb-4">
-                <span className="text-[10px] uppercase font-black tracking-widest text-[#8c9bba]">Request Status Summary (current month)</span>
-                <h3 className="text-lg font-bold">ICT Tickets - Current Month</h3>
+              <span className="text-[10px] uppercase font-black tracking-widest text-[#8c9bba]">Request Status Summary (current month)</span>
+              <h3 className="text-lg font-bold">ICT Tickets - Current Month</h3>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
               <MetricStat label="Open" value={stats.monthly.open} color="#e91e1eff" subtle />
@@ -337,184 +340,193 @@ export default function AdminDashboard() {
 
           {/* VISUALIZATION GRID */}
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
-            
+
             {/* PIE: OPEN BY MODE */}
             <ChartCard title="Open Requests by Mode">
-                <ResponsiveContainer width="100%" height={200}>
-                    <PieChart>
-                        <Pie
-                            data={modeData}
-                            cx="50%"
-                            cy="50%"
-                            innerRadius={60}
-                            outerRadius={80}
-                            paddingAngle={5}
-                            dataKey="value"
-                            onClick={(data) => {
-                                // Filter by mode if applicable
-                                setSearch(data.name);
-                            }}
-                        >
-                            {modeData.map((entry, index) => (
-                                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} className="cursor-pointer outline-none" />
-                            ))}
-                        </Pie>
-                        <Tooltip />
-                    </PieChart>
-                </ResponsiveContainer>
-                <div className="flex flex-wrap gap-x-4 gap-y-2 mt-4 px-2">
-                    {modeData.map((d, i) => (
-                        <div key={i} className="flex items-center gap-1.5 min-w-[80px]">
-                            <div className="w-2 h-2 rounded-full" style={{ background: COLORS[i % COLORS.length] }} />
-                            <span className="text-[10px] font-bold text-[#8c9bba] truncate max-w-[80px]">{d.name}</span>
-                        </div>
+              <ResponsiveContainer width="100%" height={200}>
+                <PieChart>
+                  <Pie
+                    data={modeData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={60}
+                    outerRadius={80}
+                    paddingAngle={5}
+                    dataKey="value"
+                    onClick={(data) => {
+                      // Filter by mode if applicable
+                      setSearch(data.name);
+                    }}
+                  >
+                    {modeData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} className="cursor-pointer outline-none" />
                     ))}
-                </div>
+                  </Pie>
+                  <Tooltip />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="flex flex-wrap gap-x-4 gap-y-2 mt-4 px-2">
+                {modeData.map((d, i) => (
+                  <div key={i} className="flex items-center gap-1.5 min-w-[80px]">
+                    <div className="w-2 h-2 rounded-full" style={{ background: COLORS[i % COLORS.length] }} />
+                    <span className="text-[10px] font-bold text-[#8c9bba] truncate max-w-[80px]">{d.name}</span>
+                  </div>
+                ))}
+              </div>
             </ChartCard>
 
             {/* BAR: SLA APPROACHING */}
             <ChartCard title="Requests Approaching SLA Violation">
-                <ResponsiveContainer width="100%" height={240}>
-                    <BarChart layout="vertical" data={[{ name: "Violated", val: slaStats.violated }, { name: "Approaching", val: slaStats.approaching }]}>
-                        <XAxis type="number" hide />
-                        <YAxis dataKey="name" type="category" hide />
-                        <Tooltip />
-                        <Bar dataKey="val" fill="#ff8a9a" radius={[0, 4, 4, 0]} barSize={40} />
-                    </BarChart>
-                </ResponsiveContainer>
+              <ResponsiveContainer width="100%" height={240}>
+                <BarChart layout="vertical" data={[{ name: "Violated", val: slaStats.violated }, { name: "Approaching", val: slaStats.approaching }]}>
+                  <XAxis type="number" hide />
+                  <YAxis dataKey="name" type="category" hide />
+                  <Tooltip />
+                  <Bar dataKey="val" fill="#ff8a9a" radius={[0, 4, 4, 0]} barSize={40} />
+                </BarChart>
+              </ResponsiveContainer>
             </ChartCard>
 
             {/* BAR: SLA BY CATEGORY */}
             <ChartCard title="SLA Violation by Category">
-                <ResponsiveContainer width="100%" height={200}>
-                        <BarChart data={categoryData}>
-                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f3f8" />
-                            <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10 }} />
-                            <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10 }} />
-                            <Tooltip cursor={{ fill: 'transparent' }} />
-                            <Bar 
-                                dataKey="approaching" 
-                                fill="#ffd95a" 
-                                radius={[4, 4, 0, 0]} 
-                                onClick={(data) => setSearch(data.name)} 
-                                className="cursor-pointer transition-opacity hover:opacity-80"
-                            />
-                            <Bar 
-                                dataKey="violated" 
-                                fill="#dc2626" 
-                                radius={[4, 4, 0, 0]} 
-                                onClick={(data) => setSearch(data.name)}
-                                className="cursor-pointer transition-opacity hover:opacity-80"
-                            />
-                        </BarChart>
-                </ResponsiveContainer>
-                <div className="flex justify-center gap-4 mt-4">
-                    <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-sm bg-[#ffd95a]" /><span className="text-[10px] font-bold text-[#8c9bba]">Approaching</span></div>
-                    <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-sm bg-[#dc2626]" /><span className="text-[10px] font-bold text-[#8c9bba]">Violated</span></div>
-                </div>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={categoryData}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f3f8" />
+                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10 }} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10 }} />
+                  <Tooltip cursor={{ fill: 'transparent' }} />
+                  <Bar
+                    dataKey="approaching"
+                    fill="#ffd95a"
+                    radius={[4, 4, 0, 0]}
+                    onClick={(data) => setSearch(data.name)}
+                    className="cursor-pointer transition-opacity hover:opacity-80"
+                  />
+                  <Bar
+                    dataKey="violated"
+                    fill="#dc2626"
+                    radius={[4, 4, 0, 0]}
+                    onClick={(data) => setSearch(data.name)}
+                    className="cursor-pointer transition-opacity hover:opacity-80"
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+              <div className="flex justify-center gap-4 mt-4">
+                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-sm bg-[#ffd95a]" /><span className="text-[10px] font-bold text-[#8c9bba]">Approaching</span></div>
+                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-sm bg-[#dc2626]" /><span className="text-[10px] font-bold text-[#8c9bba]">Violated</span></div>
+              </div>
             </ChartCard>
 
             {/* GAUGE: SLA OVERALL */}
             <ChartCard title="SLA Violated Requests">
-               <div className="flex flex-col items-center justify-center h-[200px] relative">
-                    <svg className="w-48 h-48 transform -rotate-90">
-                        <circle cx="96" cy="96" r="80" stroke="#f0f3f8" strokeWidth="12" fill="transparent" />
-                        <circle 
-                            cx="96" cy="96" r="80" 
-                            stroke="#e91e1eff" 
-                            strokeWidth="12" 
-                            fill="transparent" 
-                            strokeDasharray={`${(slaStats.violated / (tickets.length || 1)) * 502} 502`}
-                            strokeLinecap="round"
-                        />
-                    </svg>
-                    <div className="absolute flex flex-col items-center">
-                        <span className="text-4xl font-black text-[#1a2744]">{slaStats.violated}</span>
-                        <span className="text-[10px] font-bold text-[#8c9bba] uppercase">Impacted</span>
-                    </div>
-               </div>
+              <div className="flex flex-col items-center justify-center h-[200px] relative">
+                <svg className="w-48 h-48 transform -rotate-90">
+                  <circle cx="96" cy="96" r="80" stroke="#f0f3f8" strokeWidth="12" fill="transparent" />
+                  <circle
+                    cx="96" cy="96" r="80"
+                    stroke="#e91e1eff"
+                    strokeWidth="12"
+                    fill="transparent"
+                    strokeDasharray={`${(slaStats.violated / (tickets.length || 1)) * 502} 502`}
+                    strokeLinecap="round"
+                  />
+                </svg>
+                <div className="absolute flex flex-col items-center">
+                  <span className="text-4xl font-black text-[#1a2744]">{slaStats.violated}</span>
+                  <span className="text-[10px] font-bold text-[#8c9bba] uppercase">Impacted</span>
+                </div>
+              </div>
             </ChartCard>
 
           </div>
 
           {/* DATA TABLE SECTION */}
           <section className="bg-white rounded-[2.5rem] border border-[#e8ecf2] shadow-[0_20px_50px_-20px_rgba(26,39,68,0.1)] overflow-hidden">
-             <div className="p-6 border-b border-[#f0f3f8] flex items-center justify-between">
-                <div>
-                    <h3 className="text-xl font-black italic">Recent Operations</h3>
-                    <p className="text-xs text-[#8c9bba] font-bold">List of processed and pending requests</p>
-                </div>
-                
-                <div className="flex items-center gap-2">
-                    <div className="relative group">
-                        <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#8c9bba] group-focus-within:text-[#0e12ffff] transition-colors" />
-                        <input 
-                            placeholder="Filter by ID or Subject..." 
-                            className="pl-10 pr-4 py-2 bg-[#f8f9fc] border border-[#e8ecf2] rounded-xl text-sm outline-none focus:ring-4 focus:ring-indigo-100 focus:border-[#0e12ffff] transition-all w-64"
-                            onChange={(e) => setSearch(e.target.value)}
-                        />
-                    </div>
-                    <button className="p-2.5 rounded-xl bg-[#f8f9fc] border border-[#e8ecf2] hover:bg-[#1a2744] hover:text-white transition-all">
-                        <Filter size={16} />
-                    </button>
-                    <button className="p-2.5 rounded-xl bg-[#f8f9fc] border border-[#e8ecf2] hover:bg-[#1a2744] hover:text-white transition-all">
-                        <MoreVertical size={16} />
-                    </button>
-                </div>
-             </div>
+            <div className="p-6 border-b border-[#f0f3f8] flex items-center justify-between">
+              <div>
+                <h3 className="text-xl font-black italic">Recent Operations</h3>
+                <p className="text-xs text-[#8c9bba] font-bold">List of processed and pending requests</p>
+              </div>
 
-             <div className="overflow-x-auto">
-                <table className="w-full text-left">
-                  <thead className="bg-[#f8f9fc] text-[10px] uppercase font-black tracking-widest text-[#8c9bba] border-b border-[#f0f3f8]">
-                    <tr>
-                      <th className="px-8 py-5">Ticket ID</th>
-                      <th>Case Details</th>
-                      <th>Operational Status</th>
-                      <th>Reporting Date</th>
-                      <th className="pr-8 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[#f0f3f8]">
-                    {loading ? (
-                      <tr><td colSpan={5} className="p-10 text-center text-sm font-bold text-[#8c9bba] animate-pulse">Synchronizing Data...</td></tr>
-                    ) : filteredTickets.length === 0 ? (
-                      <tr><td colSpan={5} className="p-20 text-center text-sm font-bold text-[#8c9bba]">No matching records found in database</td></tr>
-                    ) : (
-                      filteredTickets.map((t) => (
-                        <tr key={t.id} className="group hover:bg-[#f8f9fc] transition-colors">
-                          <td className="px-8 py-5">
-                            <span className="text-sm font-black text-[#8c9bba]">ID-</span>
-                            <span className="text-sm font-black text-[#1a2744]">{t.id}</span>
-                          </td>
-                          <td>
-                            <div className="flex flex-col">
-                              <span className="text-sm font-bold truncate max-w-[200px]">{t.title}</span>
-                              <span className="text-[10px] font-bold text-[#8c9bba]">{t.request_type || "Incident Report"}</span>
-                            </div>
-                          </td>
-                          <td>
-                             <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wide border ${getStatusStyle(t.status)}`}>
-                                {getStatusIcon(t.status)}
-                                {t.status}
-                             </div>
-                          </td>
-                          <td className="text-sm font-medium text-[#6b7fa3]">
-                            {new Date(t.created_at).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' })}
-                          </td>
-                          <td className="pr-8 text-right">
-                            <button 
-                                onClick={() => router.push(`/tickets/${t.id}`)}
-                                className="p-2 rounded-lg bg-white border border-[#e8ecf2] text-[#6b7fa3] hover:text-[#0e12ffff] hover:border-[#0e12ffff] hover:shadow-md transition-all active:scale-90"
-                            >
-                                <ChevronRight size={18} />
-                            </button>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-             </div>
+              <div className="flex items-center gap-2">
+                {(filter !== "all" || search !== "") && (
+                  <button
+                    onClick={() => { setFilter("all"); setSearch(""); }}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-red-50 text-red-600 text-xs font-bold border border-red-100 hover:bg-red-100 transition-colors"
+                  >
+                    <X size={14} /> Clear Filters
+                  </button>
+                )}
+                <div className="relative group">
+                  <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#8c9bba] group-focus-within:text-[#0e12ffff] transition-colors" />
+                  <input
+                    placeholder="Filter by ID or Subject..."
+                    className="pl-10 pr-4 py-2 bg-[#f8f9fc] border border-[#e8ecf2] rounded-xl text-sm outline-none focus:ring-4 focus:ring-indigo-100 focus:border-[#0e12ffff] transition-all w-64"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                  />
+                </div>
+                <button className="p-2.5 rounded-xl bg-[#f8f9fc] border border-[#e8ecf2] hover:bg-[#1a2744] hover:text-white transition-all">
+                  <Filter size={16} />
+                </button>
+                <button className="p-2.5 rounded-xl bg-[#f8f9fc] border border-[#e8ecf2] hover:bg-[#1a2744] hover:text-white transition-all">
+                  <MoreVertical size={16} />
+                </button>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead className="bg-[#f8f9fc] text-[10px] uppercase font-black tracking-widest text-[#8c9bba] border-b border-[#f0f3f8]">
+                  <tr>
+                    <th className="px-8 py-5">Ticket ID</th>
+                    <th>Case Details</th>
+                    <th>Operational Status</th>
+                    <th>Reporting Date</th>
+                    <th className="pr-8 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#f0f3f8]">
+                  {loading ? (
+                    <tr><td colSpan={5} className="p-10 text-center text-sm font-bold text-[#8c9bba] animate-pulse">Synchronizing Data...</td></tr>
+                  ) : filteredTickets.length === 0 ? (
+                    <tr><td colSpan={5} className="p-20 text-center text-sm font-bold text-[#8c9bba]">No matching records found in database</td></tr>
+                  ) : (
+                    filteredTickets.map((t) => (
+                      <tr key={t.id} className="group hover:bg-[#f8f9fc] transition-colors">
+                        <td className="px-8 py-5">
+                          <span className="text-sm font-black text-[#8c9bba]">ID-</span>
+                          <span className="text-sm font-black text-[#1a2744]">{t.id}</span>
+                        </td>
+                        <td>
+                          <div className="flex flex-col">
+                            <span className="text-sm font-bold truncate max-w-[200px]">{t.title}</span>
+                            <span className="text-[10px] font-bold text-[#8c9bba]">{t.request_type || "Incident Report"}</span>
+                          </div>
+                        </td>
+                        <td>
+                          <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wide border ${getStatusStyle(t.status)}`}>
+                            {getStatusIcon(t.status)}
+                            {t.status}
+                          </div>
+                        </td>
+                        <td className="text-sm font-medium text-[#6b7fa3]">
+                          {new Date(t.created_at).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' })}
+                        </td>
+                        <td className="pr-8 text-right">
+                          <button
+                            onClick={() => router.push(`/tickets/${t.id}`)}
+                            className="p-2 rounded-lg bg-white border border-[#e8ecf2] text-[#6b7fa3] hover:text-[#0e12ffff] hover:border-[#0e12ffff] hover:shadow-md transition-all active:scale-90"
+                          >
+                            <ChevronRight size={18} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </section>
 
         </div>
@@ -525,15 +537,21 @@ export default function AdminDashboard() {
 
 /* ---------------- COMPONENTS ---------------- */
 
-function NavItem({ icon, label, active = false, onClick }: any) {
+interface NavItemProps {
+  icon: React.ReactNode;
+  label: string;
+  active?: boolean;
+  onClick: () => void;
+}
+
+function NavItem({ icon, label, active = false, onClick }: NavItemProps) {
   return (
     <button
       onClick={onClick}
-      className={`flex items-center gap-3 w-full p-3 rounded-xl transition-all duration-200 ${
-        active 
-          ? "bg-[#1a2744] text-white shadow-xl shadow-indigo-100" 
-          : "text-[#6b7fa3] hover:bg-[#f0f3f8] hover:text-[#1a2744]"
-      }`}
+      className={`flex items-center gap-3 w-full p-3 rounded-xl transition-all duration-200 ${active
+        ? "bg-[#1a2744] text-white shadow-xl shadow-indigo-100"
+        : "text-[#6b7fa3] hover:bg-[#f0f3f8] hover:text-[#1a2744]"
+        }`}
     >
       <div className={`${active ? "text-indigo-300" : "text-[#8c9bba]"}`}>
         {icon}
@@ -544,11 +562,20 @@ function NavItem({ icon, label, active = false, onClick }: any) {
   );
 }
 
-function MetricStat({ label, value, color, labelSuffix = "", subtle = false, onClick }: any) {
+interface MetricStatProps {
+  label: string;
+  value: number;
+  color: string;
+  labelSuffix?: string;
+  subtle?: boolean;
+  onClick?: () => void;
+}
+
+function MetricStat({ label, value, color, labelSuffix = "", subtle = false, onClick }: MetricStatProps) {
   return (
-    <div 
-        onClick={onClick}
-        className={`bg-white p-6 rounded-[2rem] border border-[#e8ecf2] flex flex-col items-center transition-all ${onClick ? 'cursor-pointer hover:border-[#1a2744] hover:shadow-xl active:scale-95' : 'hover:shadow-lg'}`}
+    <div
+      onClick={onClick}
+      className={`bg-white p-6 rounded-[2rem] border border-[#e8ecf2] flex flex-col items-center transition-all ${onClick ? 'cursor-pointer hover:border-[#1a2744] hover:shadow-xl active:scale-95' : 'hover:shadow-lg'}`}
     >
       <span className="text-4xl font-black" style={{ color }}>{value}</span>
       <span className={`text-[10px] font-black uppercase tracking-widest mt-1 text-center ${subtle ? 'text-[#8c9bba]' : 'text-[#1a2744]'}`}>
@@ -558,18 +585,23 @@ function MetricStat({ label, value, color, labelSuffix = "", subtle = false, onC
   );
 }
 
-function ChartCard({ title, children }: any) {
-    return (
-        <div className="bg-white p-6 rounded-[2.5rem] border border-[#e8ecf2] shadow-[0_10px_40px_-10px_rgba(26,39,68,0.05)] flex flex-col">
-            <h4 className="text-xs font-black text-[#1a2744] uppercase tracking-wider mb-6 pb-4 border-b border-[#f8f9fc] flex items-center justify-between">
-                {title}
-                <MoreVertical size={14} className="text-[#8c9bba]" />
-            </h4>
-            <div className="flex-1 flex flex-col justify-center">
-                {children}
-            </div>
-        </div>
-    );
+interface ChartCardProps {
+  title: string;
+  children: React.ReactNode;
+}
+
+function ChartCard({ title, children }: ChartCardProps) {
+  return (
+    <div className="bg-white p-6 rounded-[2.5rem] border border-[#e8ecf2] shadow-[0_10px_40px_-10px_rgba(26,39,68,0.05)] flex flex-col">
+      <h4 className="text-xs font-black text-[#1a2744] uppercase tracking-wider mb-6 pb-4 border-b border-[#f8f9fc] flex items-center justify-between">
+        {title}
+        <MoreVertical size={14} className="text-[#8c9bba]" />
+      </h4>
+      <div className="flex-1 flex flex-col justify-center">
+        {children}
+      </div>
+    </div>
+  );
 }
 
 function getStatusIcon(status: string) {
@@ -581,13 +613,13 @@ function getStatusIcon(status: string) {
 }
 
 function getStatusStyle(status: string) {
-    switch (status) {
-        case "Open": return "bg-red-50 text-[#e91e1eff] border-red-100";
-        case "Work in Progress": 
-        case "In Progress": return "bg-blue-50 text-[#0e12ffff] border-blue-100";
-        case "Resolved": return "bg-green-50 text-[#15eb39] border-green-100";
-        case "On Hold": return "bg-gray-50 text-[#8c9bba] border-gray-100";
-        case "Closed": return "bg-[#1a2744] text-white border-[#1a2744]";
-        default: return "bg-gray-50 text-[#1a2744] border-gray-100";
-    }
+  switch (status) {
+    case "Open": return "bg-red-50 text-[#e91e1eff] border-red-100";
+    case "Work in Progress":
+    case "In Progress": return "bg-blue-50 text-[#0e12ffff] border-blue-100";
+    case "Resolved": return "bg-green-50 text-[#15eb39] border-green-100";
+    case "On Hold": return "bg-gray-50 text-[#8c9bba] border-gray-100";
+    case "Closed": return "bg-[#1a2744] text-white border-[#1a2744]";
+    default: return "bg-gray-50 text-[#1a2744] border-gray-100";
+  }
 }
