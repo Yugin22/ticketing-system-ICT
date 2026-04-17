@@ -12,6 +12,7 @@ type TicketType = {
     description: string;
     status: string;
     request_type?: string;
+    category?: string;
     created_at: string;
 };
 
@@ -23,7 +24,10 @@ export default function TicketsFormPage() {
     const [submitting, setSubmitting] = useState(false);
     const [errorMsg, setErrorMsg] = useState("");
     const [successMsg, setSuccessMsg] = useState("");
+    const [routingMsg, setRoutingMsg] = useState("");
+    const [routingStatus, setRoutingStatus] = useState("");
     const [userId, setUserId] = useState<string | null>(null);
+    const [user, setUser] = useState<{ full_name: string; email: string } | null>(null);
 
     // User Tickets array
     const [tickets, setTickets] = useState<TicketType[]>([]);
@@ -31,6 +35,7 @@ export default function TicketsFormPage() {
     // ── FORM STATE ──
     const [title, setTitle] = useState("");
     const [description, setDescription] = useState("");
+    const [category, setCategory] = useState(""); // Default to empty to force selection
     const status = "Open"; // Automatically open and not editable
     const requestType = "Incident"; // Automatically Incident and not editable
 
@@ -47,8 +52,28 @@ export default function TicketsFormPage() {
                 return;
             }
 
-            setUserId(data.user.id);
-            await fetchUserTickets(data.user.id);
+            if (data.user) {
+                setUserId(data.user.id);
+                
+                // Fetch Profile for header
+                const { data: profile } = await supabase
+                    .from("profiles")
+                    .select("full_name, email")
+                    .eq("id", data.user.id)
+                    .maybeSingle();
+                
+                if (profile) {
+                    setUser(profile);
+                } else {
+                    // Fallback to auth metadata if profile doesn't exist yet
+                    setUser({
+                        full_name: data.user.user_metadata?.full_name || data.user.email?.split("@")[0] || "User",
+                        email: data.user.email || ""
+                    });
+                }
+
+                await fetchUserTickets(data.user.id);
+            }
         } catch (err) {
             console.error(err);
         } finally {
@@ -71,8 +96,8 @@ export default function TicketsFormPage() {
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
 
-        if (!title.trim() || !description.trim()) {
-            setErrorMsg("Subject and Description are required.");
+        if (!title.trim() || !description.trim() || !category) {
+            setErrorMsg("Subject, Category, and Description are required.");
             window.scrollTo({ top: 0, behavior: "smooth" });
             return;
         }
@@ -83,26 +108,79 @@ export default function TicketsFormPage() {
             setSubmitting(true);
             setErrorMsg("");
             setSuccessMsg("");
+            setRoutingMsg("");
 
-            // Assemble payload matching table columns
+            // ── ENSURE PROFILE EXISTS ──
+            const { data: userData } = await supabase.auth.getUser();
+            if (userData.user) {
+                const { error: profileError } = await supabase
+                    .from("profiles")
+                    .upsert({
+                        id: userData.user.id,
+                        email: userData.user.email,
+                        full_name: userData.user.user_metadata?.full_name || userData.user.email?.split("@")[0] || "User",
+                        updated_at: new Date().toISOString()
+                    }, { onConflict: 'id' });
+
+                if (profileError) {
+                    console.error("Profile auto-creation/update error:", profileError);
+                }
+            }
+
+            // ── AUTOMATED ROUTING LOGIC ──
+            setRoutingStatus("Routing..."); // Blue status indicator instead of red alert
+
+            // 1. Fetch admins with matching expertise
+            const { data: matchingStaff, error: staffError } = await supabase
+                .from("profiles")
+                .select("id, full_name, expertise")
+                .eq("role", "admin")
+                .eq("expertise", category);
+
+            let assignedTo: string | null = null;
+
+            if (!staffError && matchingStaff && matchingStaff.length > 0) {
+                // 2. Find staff with fewest open tickets
+                const staffWithWorkload = await Promise.all(matchingStaff.map(async (staff) => {
+                    const { count } = await supabase
+                        .from("tickets")
+                        .select("*", { count: 'exact', head: true })
+                        .eq("assigned_to", staff.id)
+                        .in("status", ["Open", "In Progress", "Work in Progress", "On Hold"]);
+
+                    return { id: staff.id, count: count || 0 };
+                }));
+
+                const bestStaff = staffWithWorkload.reduce((prev, curr) => (prev.count <= curr.count ? prev : curr));
+                assignedTo = bestStaff.id;
+            }
+
+            // Assemble payload
             const newTicket = {
                 title,
                 description,
                 status,
+                category,
                 user_id: userId,
+                assigned_to: assignedTo,
             };
 
-            const { error } = await supabase.from("tickets").insert([newTicket]);
+            const { error: insertError } = await supabase.from("tickets").insert([newTicket]);
 
-            if (error) {
-                console.error("Supabase Insertion Error:", error);
-                setErrorMsg(error.message);
+            if (insertError) {
+                console.error("Supabase Insertion Error:", insertError);
+                setErrorMsg(insertError.message);
+                setRoutingMsg("");
                 window.scrollTo({ top: 0, behavior: "smooth" });
             } else {
                 setSuccessMsg("Ticket submitted successfully!");
+                setRoutingMsg("");
                 window.scrollTo({ top: 0, behavior: "smooth" });
 
-                setTitle(""); setDescription("");
+                // Clear form
+                setTitle("");
+                setDescription("");
+                setCategory("General");
 
                 await fetchUserTickets(userId);
                 setTimeout(() => setSuccessMsg(""), 5000);
@@ -184,14 +262,31 @@ export default function TicketsFormPage() {
                     </div>
                     <span className="text-lg sm:text-xl font-bold tracking-tight text-[#1a2744]">QuickTicket</span>
                 </div>
-                <Link
-                    href="/dashboard"
-                    className="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-colors text-[#6b7fa3] hover:bg-[#f0f3f8] hover:text-[#1a2744]"
-                >
-                    <ArrowLeft size={16} />
-                    <span className="hidden sm:inline">Back to Dashboard</span>
-                    <span className="sm:hidden">Back</span>
-                </Link>
+                <div className="flex items-center gap-3 sm:gap-4">
+                    {user && (
+                        <div className="flex items-center gap-2 pr-2 sm:pr-4 border-r border-[#e8ecf2] mr-2">
+                             <div className="w-8 h-8 rounded-full bg-[#1a2744] text-white flex items-center justify-center text-[10px] font-bold">
+                                {(user.full_name || "U").charAt(0).toUpperCase()}
+                             </div>
+                             <div className="flex flex-col hidden sm:flex">
+                                <span className="text-[10px] font-bold text-[#1a2744] leading-tight">
+                                    {user.full_name}
+                                </span>
+                                <span className="text-[9px] text-[#8c9bba] leading-tight">
+                                    {user.email}
+                                </span>
+                             </div>
+                        </div>
+                    )}
+                    <Link
+                        href="/dashboard"
+                        className="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-colors text-[#6b7fa3] hover:bg-[#f0f3f8] hover:text-[#1a2744]"
+                    >
+                        <ArrowLeft size={16} />
+                        <span className="hidden sm:inline">Back to Dashboard</span>
+                        <span className="sm:hidden">Back</span>
+                    </Link>
+                </div>
             </header>
 
             {/* ── MAIN CONTENT GRID ── */}
@@ -223,6 +318,13 @@ export default function TicketsFormPage() {
                             </div>
                         )}
 
+                        {(routingMsg || routingStatus) && (
+                            <div className="mb-6 text-sm p-4 rounded-xl bg-blue-50 text-blue-700 border border-blue-200 animate-pulse flex items-center gap-2">
+                                <Loader2 size={18} className="animate-spin" />
+                                {routingMsg || routingStatus}
+                            </div>
+                        )}
+
                         <div className="flex flex-col gap-6">
 
                             <div className="flex flex-col">
@@ -238,6 +340,27 @@ export default function TicketsFormPage() {
                                     required
                                     className="w-full p-4 rounded-2xl outline-none transition-all text-sm font-medium bg-[#f8f9fc] text-[#1a2744] border border-[#e8ecf2] focus:border-[#0e12ffff] focus:bg-white focus:shadow-[0_0_0_4px_rgba(14,18,255,0.1)]"
                                 />
+                            </div>
+
+                            <div className="flex flex-col">
+                                <label className="text-[11px] sm:text-xs font-semibold uppercase tracking-wider mb-2 text-[#8c9bba]">
+                                    Issue Category <span className="text-[#e91e1eff]">*</span>
+                                </label>
+                                <div className="relative">
+                                    <select
+                                        value={category}
+                                        disabled={submitting}
+                                        onChange={(e) => setCategory(e.target.value)}
+                                        required
+                                        className="w-full p-4 appearance-none rounded-2xl outline-none transition-all text-sm font-medium bg-[#f8f9fc] text-[#1a2744] border border-[#e8ecf2] focus:border-[#0e12ffff] focus:bg-white focus:shadow-[0_0_0_4px_rgba(14,18,255,0.1)] cursor-pointer"
+                                    >
+                                        <option value="" disabled>Select Expertise Required</option>
+                                        <option value="Hardware">Hardware (WiFi, Computer Parts)</option>
+                                        <option value="Software">Software (Office Systems, Apps)</option>
+                                        <option value="Networking">Networking (Troubleshooting, Config)</option>
+                                    </select>
+                                    <ChevronDown size={18} className="absolute right-4 top-1/2 -translate-y-1/2 text-[#8c9bba] pointer-events-none" />
+                                </div>
                             </div>
 
                             <div className="flex flex-col">

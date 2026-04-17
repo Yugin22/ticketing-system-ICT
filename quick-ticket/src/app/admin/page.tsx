@@ -43,10 +43,15 @@ type TicketType = {
   id: string | number;
   title: string;
   status: string;
+  priority: string;
+  request_type?: string;
+  category?: string;
+  mode?: string | null;
   created_at: string;
   user_id: string;
-  request_type?: string;
-  mode?: string;
+  assigned_to: string | null;
+  profiles?: { full_name: string | null; email: string; role: string } | null;
+  assignee?: { full_name: string | null; email: string; role: string } | null;
 };
 
 /* ---------------- CONSTANTS ---------------- */
@@ -92,13 +97,24 @@ export default function AdminDashboard() {
   /* ---------------- AUTH GUARD ---------------- */
 
   useEffect(() => {
-    const checkUser = async () => {
-      const { data } = await supabase.auth.getUser();
-      if (!data.user) {
+    const checkUserAndRole = async () => {
+      const { data: authData } = await supabase.auth.getUser();
+      if (!authData.user) {
         router.push("/login");
+        return;
+      }
+
+      const { data: profileData } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", authData.user.id)
+        .maybeSingle();
+
+      if (profileData?.role !== "admin") {
+        router.push("/dashboard");
       }
     };
-    checkUser();
+    checkUserAndRole();
   }, [router]);
 
   /* ---------------- FETCH TICKETS ---------------- */
@@ -106,13 +122,55 @@ export default function AdminDashboard() {
   const fetchTickets = async () => {
     try {
       setRefreshing(true);
-      const { data, error } = await supabase
+      // Fetch tickets
+      const { data: ticketsData, error: ticketsError } = await supabase
         .from("tickets")
         .select("*")
         .order("created_at", { ascending: false });
 
-      if (!error && data) {
-        setTickets(data);
+      if (!ticketsError && ticketsData) {
+        // Collect all unique user IDs for batch profile fetch
+        const userIds = new Set<string>();
+        ticketsData.forEach(t => {
+          if (t.user_id) userIds.add(t.user_id);
+          if (t.assigned_to) userIds.add(t.assigned_to);
+        });
+
+        const uniqueIds = Array.from(userIds);
+
+        // Fetch all relevant profiles
+        const { data: profilesData } = await supabase
+          .from("profiles")
+          .select("id, full_name, email, role")
+          .in("id", uniqueIds);
+
+        // Manually stitch together & Auto-repair NULL names
+        const stitched = await Promise.all(ticketsData.map(async ticket => {
+          let p = profilesData?.find(profile => profile.id === ticket.user_id) || null;
+
+          // AUTO-REPAIR: If profile exists but full_name is null, fix it in DB and local state
+          if (p && !p.full_name) {
+            const derivedName = p.email?.split("@")[0] || "User";
+            console.log(`Auto-repairing NULL name for ${p.email} -> ${derivedName}`);
+
+            const { data: updated } = await supabase
+              .from("profiles")
+              .update({ full_name: derivedName, updated_at: new Date().toISOString() })
+              .eq("id", p.id)
+              .select()
+              .single();
+
+            if (updated) p = updated;
+          }
+
+          return {
+            ...ticket,
+            profiles: p,
+            assignee: profilesData?.find(p => p.id === ticket.assigned_to) || null
+          };
+        }));
+
+        setTickets(stitched);
       }
     } finally {
       setRefreshing(false);
@@ -122,6 +180,26 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     fetchTickets();
+
+    // Subscribe to real-time updates for tickets
+    const channel = supabase
+      .channel("admin-dashboard-changes")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "tickets",
+        },
+        () => {
+          fetchTickets();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   /* ---------------- DATA AGGREGATION ---------------- */
@@ -186,6 +264,7 @@ export default function AdminDashboard() {
 
     return { violated, approaching };
   }, [tickets, now]);
+
 
   // Chart Data: Mode distribution
   const modeData = useMemo(() => {
@@ -316,10 +395,10 @@ export default function AdminDashboard() {
               <h3 className="text-lg font-bold">ICT Tickets - All Time</h3>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-              <MetricStat label="Open" value={stats.allTime.open} color="#e91e1eff" onClick={() => setFilter("open")} />
-              <MetricStat label="Work In Progress" value={stats.allTime.wip} color="#0e12ffff" onClick={() => setFilter("in_progress")} />
-              <MetricStat label="On Hold" value={stats.allTime.onHold} color="#8c9bba" onClick={() => setFilter("on_hold")} />
-              <MetricStat label="Resolved" value={stats.allTime.resolved} color="#15eb39" onClick={() => setFilter("resolved")} />
+              <MetricStat label="Open" value={stats.allTime.open} color="#1a2744" onClick={() => setFilter("open")} />
+              <MetricStat label="Work In Progress" value={stats.allTime.wip} color="#1a2744" onClick={() => setFilter("in_progress")} />
+              <MetricStat label="On Hold" value={stats.allTime.onHold} color="#1a2744" onClick={() => setFilter("on_hold")} />
+              <MetricStat label="Resolved" value={stats.allTime.resolved} color="#1a2744" onClick={() => setFilter("resolved")} />
               <MetricStat label="Closed" value={stats.allTime.closed} color="#1a2744" onClick={() => setFilter("closed")} />
             </div>
           </section>
@@ -331,10 +410,10 @@ export default function AdminDashboard() {
               <h3 className="text-lg font-bold">ICT Tickets - Current Month</h3>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-              <MetricStat label="Open" value={stats.monthly.open} color="#e91e1eff" subtle />
-              <MetricStat label="Work In Progress" value={stats.monthly.wip} color="#0e12ffff" subtle />
-              <MetricStat label="On Hold" value={stats.monthly.onHold} color="#8c9bba" labelSuffix="Requests" subtle />
-              <MetricStat label="Resolved" value={stats.monthly.resolved} color="#15eb39" subtle />
+              <MetricStat label="Open" value={stats.monthly.open} color="#1a2744" subtle />
+              <MetricStat label="Work In Progress" value={stats.monthly.wip} color="#1a2744" subtle />
+              <MetricStat label="On Hold" value={stats.monthly.onHold} color="#1a2744" labelSuffix="Requests" subtle />
+              <MetricStat label="Resolved" value={stats.monthly.resolved} color="#1a2744" subtle />
               <MetricStat label="Closed" value={stats.monthly.closed} color="#1a2744" labelSuffix="Requests" subtle />
             </div>
           </section>
@@ -492,16 +571,19 @@ export default function AdminDashboard() {
                   <tr>
                     <th className="px-8 py-5">Ticket ID</th>
                     <th>Case Details</th>
-                    <th>Operational Status</th>
-                    <th>Reporting Date</th>
+                    <th>Reporter</th>
+                    <th>Status</th>
+                    <th>Category</th>
+                    <th>Priority</th>
+                    <th>Reported On</th>
                     <th className="pr-8 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#f0f3f8]">
                   {loading ? (
-                    <tr><td colSpan={5} className="p-10 text-center text-sm font-bold text-[#8c9bba] animate-pulse">Synchronizing Data...</td></tr>
+                    <tr><td colSpan={7} className="p-10 text-center text-sm font-bold text-[#8c9bba] animate-pulse">Synchronizing Data...</td></tr>
                   ) : filteredTickets.length === 0 ? (
-                    <tr><td colSpan={5} className="p-20 text-center text-sm font-bold text-[#8c9bba]">No matching records found in database</td></tr>
+                    <tr><td colSpan={7} className="p-20 text-center text-sm font-bold text-[#8c9bba]">No matching records found in database</td></tr>
                   ) : (
                     filteredTickets.map((t) => (
                       <tr key={t.id} className="group hover:bg-[#f8f9fc] transition-colors">
@@ -512,7 +594,29 @@ export default function AdminDashboard() {
                         <td>
                           <div className="flex flex-col">
                             <span className="text-sm font-bold truncate max-w-[200px]">{t.title}</span>
-                            <span className="text-[10px] font-bold text-[#8c9bba]">{t.request_type || "Incident Report"}</span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] font-bold text-[#8c9bba]">{t.request_type || "Incident Report"}</span>
+                              <span className="w-1 h-1 rounded-full bg-[#f0f3f8]" />
+                              <span className="text-[10px] font-bold text-[#1a2744] opacity-80">by {t.profiles?.full_name || t.profiles?.email?.split('@')[0] || (t.user_id ? `HCDC Associate (${String(t.user_id).substring(0, 8)})` : "Guest User")}</span>
+                            </div>
+                          </div>
+                        </td>
+                        <td>
+                          <div className="flex items-center gap-2">
+                            <div className="w-7 h-7 rounded-lg bg-indigo-50 border border-indigo-100 flex items-center justify-center text-[10px] font-bold text-indigo-600">
+                              {(t.profiles?.full_name || t.profiles?.email || "U").charAt(0)}
+                            </div>
+                            <div className="flex flex-col">
+                              <span className="text-xs font-bold text-[#1a2744]">
+                                {t.profiles?.full_name || (t.profiles?.email ? t.profiles.email.split('@')[0] : null) || (t.user_id ? `HCDC Associate (${String(t.user_id).substring(0, 8)})` : "Guest User")}
+                              </span>
+                              <span className="text-[10px] text-[#8c9bba]">{t.profiles?.email || "No contact email"}</span>
+                            </div>
+                          </div>
+                        </td>
+                        <td>
+                          <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wide border bg-emerald-50 text-emerald-600 border-emerald-100">
+                            {t.category || "General"}
                           </div>
                         </td>
                         <td>
@@ -521,12 +625,18 @@ export default function AdminDashboard() {
                             {t.status}
                           </div>
                         </td>
+                        <td>
+                          <div className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wide border ${getPriorityStyle(t.priority || 'Medium')}`}>
+                            <div className={`w-1.5 h-1.5 rounded-full ${t.priority === 'Emergency' ? 'animate-pulse' : ''}`} style={{ background: 'currentColor' }} />
+                            {t.priority || 'Medium'}
+                          </div>
+                        </td>
                         <td className="text-sm font-medium text-[#6b7fa3]">
                           {new Date(t.created_at).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' })}
                         </td>
                         <td className="pr-8 text-right">
                           <button
-                            onClick={() => router.push(`/tickets/${t.id}`)}
+                            onClick={() => router.push(`/admin/tickets/${t.id}`)}
                             className="p-2 rounded-lg bg-white border border-[#e8ecf2] text-[#6b7fa3] hover:text-[#0e12ffff] hover:border-[#0e12ffff] hover:shadow-md transition-all active:scale-90"
                           >
                             <ChevronRight size={18} />
@@ -586,7 +696,7 @@ function MetricStat({ label, value, color, labelSuffix = "", subtle = false, onC
   return (
     <div
       onClick={onClick}
-      className={`bg-white p-6 rounded-[2rem] border border-[#e8ecf2] flex flex-col items-center transition-all ${onClick ? 'cursor-pointer hover:border-[#1a2744] hover:shadow-xl active:scale-95' : 'hover:shadow-lg'}`}
+      className={`bg-white p-6 rounded-[2rem] border border-[#e8ecf2] flex flex-col items-center transition-all ${onClick ? 'cursor-pointer hover:shadow-xl active:scale-95' : 'hover:shadow-lg'}`}
     >
       <span className="text-4xl font-black" style={{ color }}>{value}</span>
       <span className={`text-[10px] font-black uppercase tracking-widest mt-1 text-center ${subtle ? 'text-[#8c9bba]' : 'text-[#1a2744]'}`}>
@@ -632,5 +742,15 @@ function getStatusStyle(status: string) {
     case "On Hold": return "bg-gray-50 text-[#8c9bba] border-gray-100";
     case "Closed": return "bg-[#1a2744] text-white border-[#1a2744]";
     default: return "bg-gray-50 text-[#1a2744] border-gray-100";
+  }
+}
+
+function getPriorityStyle(priority: string) {
+  switch (priority) {
+    case "Low": return "bg-gray-100 text-gray-600 border-gray-200";
+    case "Medium": return "bg-blue-50 text-blue-600 border-blue-200";
+    case "High": return "bg-orange-50 text-orange-600 border-orange-200";
+    case "Emergency": return "bg-red-50 text-red-600 border-red-200";
+    default: return "bg-gray-100 text-gray-600 border-gray-200";
   }
 }

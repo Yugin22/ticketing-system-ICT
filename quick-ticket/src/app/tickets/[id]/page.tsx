@@ -55,6 +55,7 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
   const [submitting, setSubmitting] = useState(false);
   const [user, setUser] = useState<any>(null);
   const [currentUserProfile, setCurrentUserProfile] = useState<any>(null);
+  const [reporterProfile, setReporterProfile] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -71,16 +72,30 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
           filter: `ticket_id=eq.${ticketId}`,
         },
         async (payload: any) => {
-          const { data: fullComment } = await supabase
+          // Fetch new comment basic data
+          const { data: commentData } = await supabase
             .from("ticket_comments")
-            .select("*, profiles:user_id(full_name, avatar_url, role)")
+            .select("*")
             .eq("id", payload.new.id)
             .single();
 
-          if (fullComment) {
+          if (commentData) {
+            // Fetch profile separately
+            const { data: profileData } = await supabase
+              .from("profiles")
+              .select("id, full_name, avatar_url, role")
+              .eq("id", commentData.user_id)
+              .single();
+
+            const fullComment = {
+              ...commentData,
+              profiles: profileData || null
+            };
+
             setComments(prev => {
               if (prev.some(c => c.id === fullComment.id)) return prev;
-              return [...prev, fullComment as any];
+              const newComments = [...prev, fullComment as any];
+              return newComments.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
             });
           }
         }
@@ -115,15 +130,25 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
       if (ticketError) throw ticketError;
       setTicket(ticketData);
 
-      // Fetch user profile to check roles
+      // Fetch user profile for permissions
       const { data: profileData } = await supabase
         .from("profiles")
         .select("role")
         .eq("id", authData.user.id)
-        .single();
+        .maybeSingle();
       setCurrentUserProfile(profileData);
 
-      // If there's an unread admin reply, clear it since we are viewing the ticket
+      // Fetch reporter profile manually for display
+      if (ticketData?.user_id) {
+        const { data: rep } = await supabase
+          .from("profiles")
+          .select("full_name, email")
+          .eq("id", ticketData.user_id)
+          .maybeSingle();
+        if (rep) setReporterProfile(rep);
+      }
+
+      // If there's an unread admin reply, clear it
       if (ticketData.unread_admin_reply) {
         await supabase.from("tickets").update({ unread_admin_reply: false }).eq("id", ticketId);
         setTicket({ ...ticketData, unread_admin_reply: false });
@@ -141,14 +166,30 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
   };
 
   const fetchComments = async () => {
-    const { data, error } = await supabase
+    // 1. Fetch comments first
+    const { data: commentsData, error: commentsError } = await supabase
       .from("ticket_comments")
-      .select("*, profiles:user_id(full_name, avatar_url, role)")
+      .select("*")
       .eq("ticket_id", ticketId)
       .order("created_at", { ascending: true });
 
-    if (!error && data) {
-      setComments(data as any);
+    if (!commentsError && commentsData) {
+      // 2. Extract unique user IDs
+      const uniqueIds = Array.from(new Set(commentsData.map(c => c.user_id)));
+
+      // 3. Fetch profiles in bulk
+      const { data: profilesData } = await supabase
+        .from("profiles")
+        .select("id, full_name, avatar_url, role")
+        .in("id", uniqueIds);
+
+      // 4. Stitch together
+      const stitched = commentsData.map(c => ({
+        ...c,
+        profiles: profilesData?.find(p => p.id === c.user_id) || null
+      }));
+
+      setComments(stitched as any);
     }
   };
 
@@ -235,9 +276,26 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
           </div>
         </div>
 
-        <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full border border-opacity-50 ${statusStyle.bg} ${statusStyle.text}`}>
-          {statusStyle.icon}
-          <span className="text-xs font-bold uppercase tracking-wide">{ticket.status}</span>
+        <div className="flex items-center gap-3">
+          {user && (
+            <div className="flex items-center gap-2 pr-3 sm:pr-4 border-r border-[#e8ecf2] mr-1 sm:mr-2">
+               <div className="w-8 h-8 rounded-full bg-[#1a2744] text-white flex items-center justify-center text-[10px] font-bold">
+                  {(user.user_metadata?.full_name || user.email || "U").charAt(0).toUpperCase()}
+               </div>
+               <div className="flex flex-col hidden sm:flex">
+                  <span className="text-[10px] font-bold text-[#1a2744] leading-tight">
+                      {user.user_metadata?.full_name || user.email?.split("@")[0]}
+                  </span>
+                  <span className="text-[9px] text-[#8c9bba] leading-tight">
+                      {user.email}
+                  </span>
+               </div>
+            </div>
+          )}
+          <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full border border-opacity-50 ${statusStyle.bg} ${statusStyle.text}`}>
+            {statusStyle.icon}
+            <span className="text-xs font-bold uppercase tracking-wide">{ticket.status}</span>
+          </div>
         </div>
       </header>
 
@@ -254,15 +312,19 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                   <UserIcon className="text-black" size={24} />
                 </div>
                 <div className="flex flex-col">
-                  <span className="text-[10px] font-bold text-[#8c9bba] uppercase tracking-widest mb-0.5">Reported On</span>
-                  <div className="flex items-center gap-2 text-[#1a2744] font-bold text-sm">
-                    <Calendar size={14} className="text-[#8c9bba]" />
-                    {new Date(ticket.created_at).toLocaleDateString(undefined, {
-                      weekday: 'long',
-                      year: 'numeric',
-                      month: 'long',
-                      day: 'numeric'
-                    })}
+                  <span className="text-[10px] font-bold text-[#8c9bba] uppercase tracking-widest mb-0.5">Reported By</span>
+                  <div className="flex flex-col">
+                    <span className="text-sm font-bold text-[#1a2744]">
+                      {reporterProfile?.full_name || reporterProfile?.email || (ticket.user_id === user?.id ? "You" : "User")}
+                    </span>
+                    <div className="flex items-center gap-2 text-[10px] text-[#8c9bba]">
+                      <Calendar size={12} />
+                      {new Date(ticket.created_at).toLocaleDateString(undefined, {
+                        year: 'numeric',
+                        month: 'short',
+                        day: 'numeric'
+                      })}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -293,7 +355,7 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                 <MessageSquare size={20} />
               </div>
               Conversation Thread
-              <span className="text-xs font-medium text-[#8c9bba] bg-white px-2 py-0.5 rounded-full border border-[#f0f3f8]">{comments.length}</span>
+              <span className="text-xs font-medium text-red-500 bg-white px-2 py-0.5 rounded-full border border-red-500">{comments.length}</span>
             </h3>
 
             <div className="flex flex-col gap-6">

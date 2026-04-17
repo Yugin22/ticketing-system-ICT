@@ -77,15 +77,15 @@ export default function LoginPage() {
         .from("profiles")
         .select("role")
         .eq("id", userData.user.id)
-        .single();
+        .maybeSingle();
 
-      if (profileError || !profile) {
+      if (profileError) {
         setErrorMsg("Failed to load user role");
         return;
       }
 
       // 🔀 ROLE-BASED REDIRECT
-      if (profile.role === "admin") {
+      if (profile?.role === "admin") {
         router.replace("/admin");
       } else {
         router.replace("/dashboard");

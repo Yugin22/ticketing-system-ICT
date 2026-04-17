@@ -120,23 +120,45 @@ export default function DashboardPage() {
         .eq("id", currentUser.id)
         .single();
 
+      const defaultFullName = currentUser.user_metadata?.full_name || currentUser.email?.split("@")[0] || "User";
+
       if (profileError) {
         if (profileError.code === "PGRST116") {
           // Profile doesn't exist, create it (Upsert)
           const { data: newProfile, error: insertError } = await supabase
             .from("profiles")
-            .insert([{ id: currentUser.id, email: currentUser.email, role: "user" }])
+            .insert([{ id: currentUser.id, email: currentUser.email, role: "user", full_name: defaultFullName }])
             .select()
             .single();
 
-          if (!insertError) dbProfile = newProfile;
+          if (!insertError) {
+            dbProfile = newProfile;
+          } else {
+            console.error("Profile auto-creation error details (Dashboard):", {
+              message: insertError.message,
+              code: insertError.code,
+              details: insertError.details
+            });
+          }
         } else {
-          console.error("Profile fetch error:", profileError);
+          console.error("Profile fetch error details (Dashboard):", {
+            message: profileError.message,
+            code: profileError.code
+          });
         }
+      } else if (!dbProfile.full_name) {
+        // Profile exists but full_name is null (legacy user)
+        const { data: updatedProfile, error: updateError } = await supabase
+          .from("profiles")
+          .update({ full_name: defaultFullName })
+          .eq("id", currentUser.id)
+          .select()
+          .single();
+        if (!updateError) dbProfile = updatedProfile;
       }
 
       const avatar = dbProfile?.avatar_url || currentUser.user_metadata?.avatar_url || null;
-      const fullName = dbProfile?.full_name || currentUser.user_metadata?.full_name || currentUser.email?.split("@")[0] || "User";
+      const fullName = dbProfile?.full_name || defaultFullName;
 
       setUser({
         id: currentUser.id,
@@ -427,7 +449,7 @@ export default function DashboardPage() {
                 {initials}
               </div>
               <span className="text-xs font-medium hidden sm:block max-w-[100px] lg:max-w-[120px] truncate" style={{ color: "#1a2744" }}>
-                {user?.email}
+                {user?.full_name || user?.email}
               </span>
             </div>
 

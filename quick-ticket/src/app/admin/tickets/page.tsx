@@ -45,10 +45,12 @@ type TicketType = {
   created_at: string;
   user_id: string;
   request_type?: string;
+  category?: string;
   priority: string;
+  mode?: string | null;
   assigned_to: string | null;
-  profiles: Profile; // The reporter
-  assignee?: Profile; // The assigned staff
+  profiles: Profile | null; // The reporter
+  assignee?: Profile | null; // The assigned staff
 };
 
 /* ---------------- CONSTANTS ---------------- */
@@ -93,7 +95,7 @@ export default function AllTicketsAdmin() {
         return;
       }
       // Optional: Check if user is actually an admin
-      const { data: profile } = await supabase.from("profiles").select("role").eq("id", data.user.id).single();
+      const { data: profile } = await supabase.from("profiles").select("role").eq("id", data.user.id).maybeSingle();
       if (profile?.role !== 'admin') {
         router.push("/dashboard");
       }
@@ -101,6 +103,26 @@ export default function AllTicketsAdmin() {
     checkUser();
     fetchTickets();
     fetchStaff();
+
+    // Subscribe to real-time updates for tickets
+    const channel = supabase
+      .channel("admin-tickets-inventory-changes")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "tickets",
+        },
+        () => {
+          fetchTickets();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [router]);
 
   /* ---------------- DATA FETCHING ---------------- */
@@ -108,18 +130,55 @@ export default function AllTicketsAdmin() {
   const fetchTickets = async () => {
     try {
       setRefreshing(true);
-      // Fetch tickets with reporter and assignee info
-      const { data, error } = await supabase
+      // 1. Fetch tickets basic data
+      const { data: ticketsData, error: ticketsError } = await supabase
         .from("tickets")
-        .select(`
-          *,
-          profiles:user_id(id, full_name, email, role),
-          assignee:assigned_to(id, full_name, email, role)
-        `)
+        .select("*")
         .order("created_at", { ascending: false });
 
-      if (!error && data) {
-        setTickets(data as any);
+      if (!ticketsError && ticketsData) {
+        // 2. Collect unique user IDs (reporters and assignees)
+        const userIds = new Set<string>();
+        ticketsData.forEach(t => {
+          if (t.user_id) userIds.add(t.user_id);
+          if (t.assigned_to) userIds.add(t.assigned_to);
+        });
+
+        const uniqueIds = Array.from(userIds);
+
+        // 3. Fetch all profiles in one bulk query
+        const { data: profilesData } = await supabase
+          .from("profiles")
+          .select("id, full_name, email, role, avatar_url")
+          .in("id", uniqueIds);
+
+        // 4. Manually stitch profiles to tickets & Auto-repair NULL names
+        const stitchedTickets = await Promise.all(ticketsData.map(async ticket => {
+          let p = profilesData?.find(profile => profile.id === ticket.user_id) || null;
+
+          // AUTO-REPAIR: If profile exists but full_name is null/empty, fix it in DB and local state
+          if (p && !p.full_name) {
+            const derivedName = p.email?.split("@")[0] || "User";
+            console.log(`Auto-repairing NULL name for ${p.email} -> ${derivedName}`);
+
+            const { data: updated } = await supabase
+              .from("profiles")
+              .update({ full_name: derivedName, updated_at: new Date().toISOString() })
+              .eq("id", p.id)
+              .select()
+              .single();
+
+            if (updated) p = updated;
+          }
+
+          return {
+            ...ticket,
+            profiles: p,
+            assignee: profilesData?.find(p => p.id === ticket.assigned_to) || null
+          };
+        }));
+
+        setTickets(stitchedTickets as any);
       }
     } finally {
       setRefreshing(false);
@@ -191,7 +250,12 @@ export default function AllTicketsAdmin() {
         .update({ assigned_to: staffId })
         .in("id", Array.from(selectedTickets));
 
-      if (!error) {
+      if (error && error.code === 'PGRST204' && error.message.includes('assigned_to')) {
+        alert("Warning: The 'assigned_to' column is missing from your Supabase database schema. Ticket assignment was skipped. Please add the 'assigned_to' column as a UUID type to enable this feature.");
+      } else if (error) {
+        console.error("Bulk assign error:", error);
+        alert(`Failed to assign tickets: ${error.message}`);
+      } else {
         await fetchTickets();
         setSelectedTickets(new Set());
       }
@@ -226,7 +290,20 @@ export default function AllTicketsAdmin() {
         .update({ assigned_to: staffId, status: "In Progress" })
         .eq("id", ticketId);
 
-      if (!error) {
+      if (error && error.code === 'PGRST204' && error.message.includes('assigned_to')) {
+        console.warn("Database schema missing 'assigned_to' column. Retrying save without assignment.");
+        alert("Warning: The 'assigned_to' column is missing from your Supabase database schema. Ticket status was updated to 'In Progress', but technician assignment was skipped. Please add the 'assigned_to' column as a UUID type to enable this feature.");
+
+        const { error: retryError } = await supabase
+          .from("tickets")
+          .update({ status: "In Progress" })
+          .eq("id", ticketId);
+
+        if (!retryError) await fetchTickets();
+      } else if (error) {
+        console.error("Assign ticket error:", error);
+        alert(`Failed to assign ticket: ${error.message}`);
+      } else {
         await fetchTickets();
       }
     } finally {
@@ -240,6 +317,22 @@ export default function AllTicketsAdmin() {
       const { error } = await supabase
         .from("tickets")
         .update({ status: newStatus })
+        .eq("id", ticketId);
+
+      if (!error) {
+        await fetchTickets();
+      }
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const handleUpdatePriority = async (ticketId: string | number, newPriority: string) => {
+    try {
+      setRefreshing(true);
+      const { error } = await supabase
+        .from("tickets")
+        .update({ priority: newPriority })
         .eq("id", ticketId);
 
       if (!error) {
@@ -385,8 +478,9 @@ export default function AllTicketsAdmin() {
                   <th className="px-4 py-5 text-[11px] font-black uppercase tracking-widest text-[#8c9bba]">Ticket ID</th>
                   <th className="px-4 py-5 text-[11px] font-black uppercase tracking-widest text-[#8c9bba]">Subject & Detail</th>
                   <th className="px-4 py-5 text-[11px] font-black uppercase tracking-widest text-[#8c9bba]">Status</th>
+                  <th className="px-4 py-5 text-[11px] font-black uppercase tracking-widest text-[#8c9bba]">Category</th>
                   <th className="px-4 py-5 text-[11px] font-black uppercase tracking-widest text-[#8c9bba]">Priority</th>
-                  <th className="px-4 py-5 text-[11px] font-black uppercase tracking-widest text-[#8c9bba]">Reporting Staff</th>
+                  <th className="px-4 py-5 text-[11px] font-black uppercase tracking-widest text-[#8c9bba]">Reporter</th>
                   <th className="px-4 py-5 text-[11px] font-black uppercase tracking-widest text-[#8c9bba]">Assigned Tech</th>
                   <th className="pr-8 py-5 text-[11px] font-black uppercase tracking-widest text-[#8c9bba] text-right">Actions</th>
                 </tr>
@@ -432,7 +526,11 @@ export default function AllTicketsAdmin() {
                       <td className="px-4 py-5">
                         <div className="flex flex-col max-w-[240px]">
                           <p className="text-sm font-bold text-[#1a2744] truncate">{t.title}</p>
-                          <p className="text-[10px] font-bold text-[#8c9bba] mt-0.5">{t.request_type || "Incident"}</p>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <p className="text-[10px] font-bold text-[#8c9bba]">{t.request_type || "Incident"}</p>
+                            <span className="w-1 h-1 rounded-full bg-[#e8ecf2]" />
+                            <p className="text-[10px] font-bold text-[#1a2744] opacity-80">by {t.profiles?.full_name || t.profiles?.email?.split('@')[0] || (t.user_id ? `HCDC Associate (${String(t.user_id).substring(0, 8)})` : "Guest User")}</p>
+                          </div>
                         </div>
                       </td>
                       <td className="px-4 py-5">
@@ -442,19 +540,39 @@ export default function AllTicketsAdmin() {
                         </div>
                       </td>
                       <td className="px-4 py-5">
-                        <div className={`px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider inline-flex items-center gap-1.5 border ${PRIORITY_COLORS[t.priority || "Medium"]}`}>
-                          <div className={`w-1.5 h-1.5 rounded-full ${t.priority === 'Emergency' ? 'animate-pulse' : ''}`} style={{ background: "currentColor" }} />
-                          {t.priority || "Medium"}
+                        <div className={`px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider inline-flex items-center gap-1.5 border bg-emerald-50 text-emerald-600 border-emerald-100`}>
+                          {t.category || "General"}
+                        </div>
+                      </td>
+                      <td className="px-4 py-5">
+                        <div className="relative group/priority">
+                          <button className={`px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider inline-flex items-center gap-1.5 border transition-all hover:shadow-md active:scale-95 ${PRIORITY_COLORS[t.priority || "Medium"]}`}>
+                            <div className={`w-1.5 h-1.5 rounded-full ${t.priority === 'Emergency' ? 'animate-pulse' : ''}`} style={{ background: "currentColor" }} />
+                            {t.priority || "Medium"}
+                          </button>
+                          <div className="absolute top-full left-0 mt-1 w-32 bg-white rounded-xl shadow-xl p-1.5 hidden group-hover/priority:block z-50 border border-[#e8ecf2] animate-fade-in-up">
+                            {PRIORITIES.map(p => (
+                              <button
+                                key={p}
+                                onClick={() => handleUpdatePriority(t.id, p)}
+                                className={`w-full text-left px-3 py-1.5 rounded-lg text-[10px] font-bold transition-colors ${t.priority === p ? 'bg-[#f0f3f8] text-[#1a2744]' : 'text-[#6b7fa3] hover:bg-[#f8f9fc] hover:text-[#1a2744]'}`}
+                              >
+                                {p}
+                              </button>
+                            ))}
+                          </div>
                         </div>
                       </td>
                       <td className="px-4 py-5">
                         <div className="flex items-center gap-2">
-                          <div className="w-7 h-7 rounded-lg bg-white border border-[#e8ecf2] flex items-center justify-center text-[10px] font-bold text-[#1a2744]">
-                            {t.profiles?.full_name?.charAt(0)}
+                          <div className="w-7 h-7 rounded-lg bg-indigo-50 border border-indigo-100 flex items-center justify-center text-[10px] font-bold text-indigo-600">
+                            {(t.profiles?.full_name || t.profiles?.email || "U").charAt(0)}
                           </div>
                           <div className="flex flex-col">
-                            <p className="text-[11px] font-bold text-[#1a2744]">{t.profiles?.full_name || "Unknown User"}</p>
-                            <p className="text-[9px] font-medium text-[#8c9bba]">{t.profiles?.email}</p>
+                            <p className="text-[11px] font-bold text-[#1a2744]">
+                              {t.profiles?.full_name || (t.profiles?.email ? t.profiles.email.split('@')[0] : null) || (t.user_id ? `HCDC Associate (${String(t.user_id).substring(0, 8)})` : "Guest User")}
+                            </p>
+                            <p className="text-[9px] font-medium text-[#8c9bba]">{t.profiles?.email || "No contact info"}</p>
                           </div>
                         </div>
                       </td>
@@ -498,7 +616,7 @@ export default function AllTicketsAdmin() {
                         </button>
 
                         <button
-                          onClick={() => router.push(`/tickets/${t.id}`)}
+                          onClick={() => router.push(`/admin/tickets/${t.id}`)}
                           className="p-2 rounded-xl bg-white border border-[#e8ecf2] text-[#6b7fa3] hover:text-[#1a2744] hover:shadow-md transition-all active:scale-90"
                         >
                           <ChevronRight size={18} />
