@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, use } from "react";
+import { useEffect, useState, use, useRef } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -99,6 +99,36 @@ export default function AdminTicketDetailPage({ params }: { params: Promise<{ id
   const [tempPriority, setTempPriority] = useState<string>("");
   const [tempAssignee, setTempAssignee] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [showScrollButton, setShowScrollButton] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll to bottom on new messages
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTo({
+        top: scrollRef.current.scrollHeight,
+        behavior: "smooth"
+      });
+    }
+  }, [comments]);
+
+  const handleScroll = () => {
+    if (scrollRef.current) {
+      const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
+      // Show button if user is more than 200px from bottom
+      const isNearBottom = scrollHeight - scrollTop - clientHeight < 200;
+      setShowScrollButton(!isNearBottom);
+    }
+  };
+
+  const scrollToBottom = () => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTo({
+        top: scrollRef.current.scrollHeight,
+        behavior: "smooth"
+      });
+    }
+  };
 
   /* ---------- REAL-TIME SUBSCRIPTION ---------- */
 
@@ -562,8 +592,8 @@ export default function AdminTicketDetailPage({ params }: { params: Promise<{ id
           </div>
 
           {/* ────── CONVERSATION THREAD ────── */}
-          <div className="flex flex-col gap-6">
-            <h3 className="text-xl font-bold text-[#1a2744] flex items-center gap-3 ml-2">
+          <div className="flex flex-col gap-4 relative group/thread">
+            <h3 className="text-xl font-bold text-[#1a2744] flex items-center gap-3 ml-2 mb-2">
               <div className="p-2 rounded-xl bg-blue-50 text-[#0e12ffff]">
                 <MessageSquare size={20} />
               </div>
@@ -573,65 +603,83 @@ export default function AdminTicketDetailPage({ params }: { params: Promise<{ id
               </span>
             </h3>
 
-            <div className="flex flex-col gap-6">
-              {comments.length === 0 ? (
-                <div className="bg-white rounded-[2rem] p-12 text-center border border-dashed border-[#8c9bba]/30">
-                  <div className="w-16 h-16 bg-[#f8f9fc] rounded-full flex items-center justify-center mx-auto mb-4 text-[#8c9bba]">
-                    <MessageSquare size={32} opacity={0.3} />
-                  </div>
-                  <p className="text-sm font-bold text-[#1a2744]">No replies yet</p>
-                  <p className="text-xs text-[#8c9bba] mt-1">Start the conversation by sending a response to the user.</p>
-                </div>
-              ) : (
-                comments.map((comment, index) => {
-                  const isCurrentAuthor = comment.user_id === user?.id;
-                  const isStaff = comment.profiles?.role === "admin";
-
-                  return (
-                    <div
-                      key={comment.id}
-                      className="flex flex-col gap-2 animate-fade-in-up"
-                      style={{ animationDelay: `${index * 50}ms` }}
-                    >
-                      <div className={`flex items-start gap-4 ${isCurrentAuthor ? "flex-row-reverse" : "flex-row"}`}>
-                        <div
-                          className={`flex-shrink-0 w-10 h-10 rounded-2xl flex items-center justify-center text-white font-bold text-sm shadow-md transition-transform hover:scale-110 ${isStaff ? "bg-gradient-to-br from-[#1a2744] to-[#0e12ffff]" : "bg-gradient-to-br from-indigo-400 to-indigo-600"
-                            }`}
-                        >
-                          {comment.profiles?.full_name?.charAt(0).toUpperCase() || "U"}
-                        </div>
-
-                        <div className={`max-w-[85%] sm:max-w-[70%] flex flex-col ${isCurrentAuthor ? "items-end" : "items-start"}`}>
-                          <div className="flex items-center gap-2 mb-1 px-1">
-                            <span className="text-[11px] font-bold text-[#1a2744]">
-                              {isCurrentAuthor ? "You" : (comment.profiles?.full_name || (comment.profiles?.email ? comment.profiles.email.split('@')[0] : null) || `User (${comment.user_id?.substring(0, 8)})`)}
-                            </span>
-                            {isStaff && (
-                              <span className="text-[9px] font-bold bg-[#1a2744] text-white px-1.5 py-0.5 rounded uppercase tracking-tighter">
-                                Staff
-                              </span>
-                            )}
-                            <span className="text-[10px] text-[#8c9bba]">
-                              {new Date(comment.created_at).toLocaleTimeString([], {
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              })}
-                            </span>
-                          </div>
-
-                          <div
-                            className={`px-5 py-4 rounded-[2rem] text-sm leading-relaxed shadow-sm transition-all duration-300 hover:shadow-md ${isCurrentAuthor
-                              ? "bg-[#1a2744] text-white rounded-tr-none"
-                              : "bg-white text-[#1a2744] border border-[#e8ecf2] rounded-tl-none"
-                              }`}
-                          >
-                            {comment.content}
-                          </div>
-                        </div>
-                      </div>
+            <div className="relative">
+              <div
+                ref={scrollRef}
+                onScroll={handleScroll}
+                className="flex flex-col gap-6 max-h-[550px] min-h-[300px] overflow-y-auto p-6 sm:p-8 rounded-[2.5rem] bg-white border border-[#e8ecf2] shadow-[inset_0_2px_10px_rgba(0,0,0,0.02)] scroll-smooth custom-scrollbar"
+              >
+                {comments.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-20 text-center">
+                    <div className="w-20 h-20 bg-[#f8f9fc] rounded-full flex items-center justify-center mb-6 text-[#8c9bba] border border-dashed border-[#e8ecf2]">
+                      <MessageSquare size={32} className="opacity-20" />
                     </div>
-                  );
-                })
+                    <h4 className="text-base font-bold text-[#1a2744]">No activity yet</h4>
+                    <p className="text-xs text-[#8c9bba] max-w-[200px] mt-2">Be the first to respond and help the user with their request.</p>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-8">
+                    {comments.map((comment, index) => {
+                      const isCurrentAuthor = comment.user_id === user?.id;
+                      const isStaff = comment.profiles?.role === "admin";
+
+                      return (
+                        <div
+                          key={comment.id}
+                          className={`flex flex-col gap-2 animate-fade-in-up ${isCurrentAuthor ? "items-end" : "items-start"}`}
+                          style={{ animationDelay: `${index * 30}ms` }}
+                        >
+                          <div className={`flex items-start gap-3 ${isCurrentAuthor ? "flex-row-reverse" : "flex-row"}`}>
+                            <div
+                              className={`flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-white font-bold text-xs shadow-sm transition-all hover:scale-110 ${isStaff ? "bg-[#1a2744]" : "bg-indigo-500"}`}
+                            >
+                              {comment.profiles?.full_name?.charAt(0).toUpperCase() || "U"}
+                            </div>
+
+                            <div className={`flex flex-col ${isCurrentAuthor ? "items-end" : "items-start"}`}>
+                              <div className="flex items-center gap-2 mb-1.5 px-1">
+                                <span className="text-[11px] font-bold text-[#1a2744]">
+                                  {isCurrentAuthor ? "You" : (comment.profiles?.full_name || (comment.profiles?.email ? comment.profiles.email.split('@')[0] : null) || `User`)}
+                                </span>
+                                {isStaff && (
+                                  <div className="flex items-center gap-1 bg-[#1a2744]/5 px-1.5 py-0.5 rounded text-[8px] font-black text-[#1a2744] uppercase tracking-tighter">
+                                    <Shield size={8} /> Staff
+                                  </div>
+                                )}
+                                <span className="text-[10px] text-[#8c9bba] font-medium">
+                                  {new Date(comment.created_at).toLocaleTimeString([], {
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                  })}
+                                </span>
+                              </div>
+
+                              <div
+                                className={`px-5 py-3.5 rounded-3xl text-sm leading-relaxed shadow-sm transition-all duration-300 hover:shadow-md max-w-[90%] sm:max-w-[450px] ${isCurrentAuthor
+                                  ? "bg-[#1a2744] text-white rounded-tr-none"
+                                  : "bg-[#f8f9fc] text-[#1a2744] border border-[#e8ecf2] rounded-tl-none"
+                                  }`}
+                              >
+                                {comment.content}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* SCROLL TO BOTTOM BUTTON */}
+              {showScrollButton && (
+                <button
+                  onClick={scrollToBottom}
+                  className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-white/90 backdrop-blur-md border border-[#e8ecf2] text-[#1a2744] px-4 py-2 rounded-full shadow-xl flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest hover:bg-[#1a2744] hover:text-white transition-all animate-bounce z-20"
+                >
+                  <ChevronDown size={14} />
+                  New Messages Below
+                </button>
               )}
             </div>
 
@@ -646,7 +694,7 @@ export default function AdminTicketDetailPage({ params }: { params: Promise<{ id
                     value={newComment}
                     onChange={(e) => setNewComment(e.target.value)}
                     placeholder="Reply as admin..."
-                    className="w-full mt-5 bg-transparent border-none outline-none text-sm px-2 resize-none max-h-32 min-h-[44px] overflow-hidden"
+                    className="w-full py-4 bg-transparent border-none outline-none text-sm px-2 resize-none max-h-32 min-h-[44px] overflow-hidden flex items-center"
                     disabled={submitting}
                   />
                 </div>

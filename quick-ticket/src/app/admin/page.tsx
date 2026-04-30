@@ -275,12 +275,7 @@ export default function AdminDashboard() {
       counts[mode] = (counts[mode] || 0) + 1;
     });
     const entries = Object.entries(counts).map(([name, value]) => ({ name, value }));
-    return entries.length >= 2 ? entries : [
-      { name: "E-Mail", value: 14 },
-      { name: "Portal", value: 51 },
-      { name: "Letter", value: 5 },
-      { name: "Direct", value: 1 },
-    ];
+    return entries;
   }, [tickets]);
 
   // Chart Data: SLA by Category
@@ -288,7 +283,7 @@ export default function AdminDashboard() {
     if (!now) return [];
     const counts: Record<string, { approaching: number; violated: number }> = {};
     tickets.forEach(t => {
-      const cat = t.request_type || "Incident";
+      const cat = t.category || "General";
       if (!counts[cat]) counts[cat] = { approaching: 0, violated: 0 };
 
       const created = new Date(t.created_at).getTime();
@@ -300,12 +295,7 @@ export default function AdminDashboard() {
     });
 
     const entries = Object.entries(counts).map(([name, stats]) => ({ name, ...stats }));
-    return entries.length >= 2 ? entries : [
-      { name: "Hardware", approaching: 2, violated: 4 },
-      { name: "Software", approaching: 1, violated: 1 },
-      { name: "Networking", approaching: 5, violated: 7 },
-      { name: "Accounts", approaching: 1, violated: 20 },
-    ];
+    return entries;
   }, [tickets, now]);
 
   /* ---------------- FILTERING ---------------- */
@@ -424,88 +414,112 @@ export default function AdminDashboard() {
 
             {/* PIE: OPEN BY MODE */}
             <ChartCard title="Open Requests by Mode">
-              <ResponsiveContainer width="100%" height={200}>
-                <PieChart>
-                  <Pie
-                    data={modeData}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={60}
-                    outerRadius={80}
-                    paddingAngle={5}
-                    dataKey="value"
-                    onClick={(data) => {
-                      // Filter by mode if applicable
-                      if (data && data.name) {
-                        setSearch(data.name);
-                      }
-                    }}
-                  >
-                    {modeData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} className="cursor-pointer outline-none" />
+              {modeData.length > 0 ? (
+                <>
+                  <ResponsiveContainer width="100%" height={200}>
+                    <PieChart>
+                      <Pie
+                        data={modeData}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={60}
+                        outerRadius={80}
+                        paddingAngle={5}
+                        dataKey="value"
+                        onClick={(data) => {
+                          if (data && data.name) {
+                            setSearch(data.name);
+                          }
+                        }}
+                      >
+                        {modeData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} className="cursor-pointer outline-none" />
+                        ))}
+                      </Pie>
+                      <Tooltip />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="flex flex-wrap gap-x-4 gap-y-2 mt-4 px-2">
+                    {modeData.map((d, i) => (
+                      <div key={i} className="flex items-center gap-1.5 min-w-[80px]">
+                        <div className="w-2 h-2 rounded-full" style={{ background: COLORS[i % COLORS.length] }} />
+                        <span className="text-[10px] font-bold text-[#8c9bba] truncate max-w-[80px]">{d.name}</span>
+                      </div>
                     ))}
-                  </Pie>
-                  <Tooltip />
-                </PieChart>
-              </ResponsiveContainer>
-              <div className="flex flex-wrap gap-x-4 gap-y-2 mt-4 px-2">
-                {modeData.map((d, i) => (
-                  <div key={i} className="flex items-center gap-1.5 min-w-[80px]">
-                    <div className="w-2 h-2 rounded-full" style={{ background: COLORS[i % COLORS.length] }} />
-                    <span className="text-[10px] font-bold text-[#8c9bba] truncate max-w-[80px]">{d.name}</span>
                   </div>
-                ))}
-              </div>
+                </>
+              ) : (
+                <div className="flex flex-col items-center justify-center h-[200px] text-[#8c9bba]">
+                  <Activity size={32} className="mb-2 opacity-20" />
+                  <span className="text-[10px] font-bold uppercase tracking-widest">No Data Available</span>
+                </div>
+              )}
             </ChartCard>
 
             {/* BAR: SLA APPROACHING */}
             <ChartCard title="Requests Approaching SLA Violation">
-              <ResponsiveContainer width="100%" height={240}>
-                <BarChart layout="vertical" data={[{ name: "Violated", val: slaStats.violated }, { name: "Approaching", val: slaStats.approaching }]}>
-                  <XAxis type="number" hide />
-                  <YAxis dataKey="name" type="category" hide />
-                  <Tooltip />
-                  <Bar dataKey="val" fill="#ff8a9a" radius={[0, 4, 4, 0]} barSize={40} />
-                </BarChart>
-              </ResponsiveContainer>
+              {slaStats.violated > 0 || slaStats.approaching > 0 ? (
+                <ResponsiveContainer width="100%" height={240}>
+                  <BarChart layout="vertical" data={[{ name: "Violated", val: slaStats.violated }, { name: "Approaching", val: slaStats.approaching }]}>
+                    <XAxis type="number" hide />
+                    <YAxis dataKey="name" type="category" tick={{ fontSize: 10, fontWeight: 'bold' }} />
+                    <Tooltip />
+                    <Bar dataKey="val" fill="#ff8a9a" radius={[0, 4, 4, 0]} barSize={40} />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="flex flex-col items-center justify-center h-[200px] text-emerald-500">
+                  <CheckCircle2 size={32} className="mb-2 opacity-40" />
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-600">All within SLA</span>
+                </div>
+              )}
             </ChartCard>
 
             {/* BAR: SLA BY CATEGORY */}
             <ChartCard title="SLA Violation by Category">
-              <ResponsiveContainer width="100%" height={200}>
-                <BarChart data={categoryData}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f3f8" />
-                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10 }} />
-                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10 }} />
-                  <Tooltip cursor={{ fill: 'transparent' }} />
-                  <Bar
-                    dataKey="approaching"
-                    fill="#ffd95a"
-                    radius={[4, 4, 0, 0]}
-                    onClick={(data) => {
-                      if (data && data.name) {
-                        setSearch(data.name);
-                      }
-                    }}
-                    className="cursor-pointer transition-opacity hover:opacity-80"
-                  />
-                  <Bar
-                    dataKey="violated"
-                    fill="#dc2626"
-                    radius={[4, 4, 0, 0]}
-                    onClick={(data) => {
-                      if (data && data.name) {
-                        setSearch(data.name);
-                      }
-                    }}
-                    className="cursor-pointer transition-opacity hover:opacity-80"
-                  />
-                </BarChart>
-              </ResponsiveContainer>
-              <div className="flex justify-center gap-4 mt-4">
-                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-sm bg-[#ffd95a]" /><span className="text-[10px] font-bold text-[#8c9bba]">Approaching</span></div>
-                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-sm bg-[#dc2626]" /><span className="text-[10px] font-bold text-[#8c9bba]">Violated</span></div>
-              </div>
+              {categoryData.length > 0 ? (
+                <>
+                  <ResponsiveContainer width="100%" height={200}>
+                    <BarChart data={categoryData}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f3f8" />
+                      <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10 }} />
+                      <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10 }} />
+                      <Tooltip cursor={{ fill: 'transparent' }} />
+                      <Bar
+                        dataKey="approaching"
+                        fill="#ffd95a"
+                        radius={[4, 4, 0, 0]}
+                        onClick={(data) => {
+                          if (data && data.name) {
+                            setSearch(data.name);
+                          }
+                        }}
+                        className="cursor-pointer transition-opacity hover:opacity-80"
+                      />
+                      <Bar
+                        dataKey="violated"
+                        fill="#dc2626"
+                        radius={[4, 4, 0, 0]}
+                        onClick={(data) => {
+                          if (data && data.name) {
+                            setSearch(data.name);
+                          }
+                        }}
+                        className="cursor-pointer transition-opacity hover:opacity-80"
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+                  <div className="flex justify-center gap-4 mt-4">
+                    <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-sm bg-[#ffd95a]" /><span className="text-[10px] font-bold text-[#8c9bba]">Approaching</span></div>
+                    <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-sm bg-[#dc2626]" /><span className="text-[10px] font-bold text-[#8c9bba]">Violated</span></div>
+                  </div>
+                </>
+              ) : (
+                <div className="flex flex-col items-center justify-center h-[200px] text-[#8c9bba]">
+                  <Filter size={32} className="mb-2 opacity-20" />
+                  <span className="text-[10px] font-bold uppercase tracking-widest">No Categorized Data</span>
+                </div>
+              )}
             </ChartCard>
 
             {/* GAUGE: SLA OVERALL */}
