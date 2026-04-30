@@ -69,28 +69,6 @@ export default function RegisterPage() {
         return;
       }
 
-      const user = data?.user;
-
-      if (user) {
-        const { error: profileError } = await supabase.from("profiles").upsert(
-          {
-            id: user.id,
-            email: user.email,
-            full_name: user.email?.split("@")[0] || "User",
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: "id" }
-        );
-        
-        if (profileError) {
-          console.error("Profile auto-creation error details (Register):", {
-            message: profileError.message,
-            code: profileError.code,
-            details: profileError.details
-          });
-        }
-      }
-
       router.replace("/login");
     } catch (err) {
       console.error(err);

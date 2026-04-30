@@ -54,14 +54,14 @@ export default function TicketsFormPage() {
 
             if (data.user) {
                 setUserId(data.user.id);
-                
+
                 // Fetch Profile for header
                 const { data: profile } = await supabase
                     .from("profiles")
                     .select("full_name, email")
                     .eq("id", data.user.id)
                     .maybeSingle();
-                
+
                 if (profile) {
                     setUser(profile);
                 } else {
@@ -117,13 +117,13 @@ export default function TicketsFormPage() {
                     .from("profiles")
                     .upsert({
                         id: userData.user.id,
-                        email: userData.user.email,
+                        // email is usually handled by auth and shouldn't be updated here if it exists
                         full_name: userData.user.user_metadata?.full_name || userData.user.email?.split("@")[0] || "User",
                         updated_at: new Date().toISOString()
                     }, { onConflict: 'id' });
 
                 if (profileError) {
-                    console.error("Profile auto-creation/update error:", profileError);
+                    console.error("Profile auto-creation/update error:", profileError.message || JSON.stringify(profileError));
                 }
             }
 
@@ -180,7 +180,7 @@ export default function TicketsFormPage() {
                 // Clear form
                 setTitle("");
                 setDescription("");
-                setCategory("General");
+                setCategory("");
 
                 await fetchUserTickets(userId);
                 setTimeout(() => setSuccessMsg(""), 5000);
@@ -265,17 +265,17 @@ export default function TicketsFormPage() {
                 <div className="flex items-center gap-3 sm:gap-4">
                     {user && (
                         <div className="flex items-center gap-2 pr-2 sm:pr-4 border-r border-[#e8ecf2] mr-2">
-                             <div className="w-8 h-8 rounded-full bg-[#1a2744] text-white flex items-center justify-center text-[10px] font-bold">
+                            <div className="w-8 h-8 rounded-full bg-[#1a2744] text-white flex items-center justify-center text-[10px] font-bold">
                                 {(user.full_name || "U").charAt(0).toUpperCase()}
-                             </div>
-                             <div className="flex flex-col hidden sm:flex">
+                            </div>
+                            <div className="flex flex-col hidden sm:flex">
                                 <span className="text-[10px] font-bold text-[#1a2744] leading-tight">
                                     {user.full_name}
                                 </span>
                                 <span className="text-[9px] text-[#8c9bba] leading-tight">
                                     {user.email}
                                 </span>
-                             </div>
+                            </div>
                         </div>
                     )}
                     <Link

@@ -103,20 +103,28 @@ export default function AdminTicketDetailPage({ params }: { params: Promise<{ id
   /* ---------- REAL-TIME SUBSCRIPTION ---------- */
 
   useEffect(() => {
-    const uniqueChannelName = `admin-ticket-detail-${ticketId}-${Date.now()}`;
+    const uniqueChannelName = `ticket-room-${ticketId}`;
     const channel = supabase
       .channel(uniqueChannelName)
+      .on(
+        "broadcast",
+        { event: "new_comment" },
+        () => {
+          console.log("Broadcast received! Fetching new comment.");
+          fetchComments();
+        }
+      )
       .on(
         "postgres_changes",
         {
           event: "INSERT",
           schema: "public",
           table: "ticket_comments",
-          // Try without filter first if it continues to fail, but let's stick to a robust eq check.
-          // Sometimes string vs int in JS vs Postgres can be picky.
-          filter: `ticket_id=eq.${ticketId}`,
         },
         async (payload: any) => {
+          // Client-side filter to be completely safe against string/int mismatch
+          if (String(payload.new.ticket_id) !== String(ticketId)) return;
+
           console.log("New comment received via real-time:", payload.new);
           // Fetch the new comment basic data to be sure we have the latest and correct types
           const { data: commentData, error: commentError } = await supabase
@@ -326,6 +334,14 @@ export default function AdminTicketDetailPage({ params }: { params: Promise<{ id
 
       if (error) throw error;
       setNewComment("");
+      await fetchComments();
+
+      // Send broadcast to instantly notify the user side
+      await supabase.channel(`ticket-room-${ticketId}`).send({
+        type: "broadcast",
+        event: "new_comment",
+        payload: { ticketId },
+      });
 
       // Mark unread for user
       await supabase
@@ -344,14 +360,21 @@ export default function AdminTicketDetailPage({ params }: { params: Promise<{ id
     if (!ticket) return;
     try {
       setIsSaving(true);
-      let { error } = await supabase
+      let { error, data } = await supabase
         .from("tickets")
         .update({
           status: tempStatus,
           priority: tempPriority,
           assigned_to: tempAssignee
         })
-        .eq("id", ticketId);
+        .eq("id", ticketId)
+        .select();
+
+      if (!error && (!data || data.length === 0)) {
+        alert("Action blocked: Supabase Row Level Security (RLS) prevented the update. Please update your SQL policies in Supabase.");
+        setIsSaving(false);
+        return;
+      }
 
       // Gracefully handle missing 'assigned_to' column in Supabase database schema
       if (error && error.code === 'PGRST204' && error.message.includes('assigned_to')) {
@@ -476,26 +499,12 @@ export default function AdminTicketDetailPage({ params }: { params: Promise<{ id
           </Link>
           <div className="h-6 w-px bg-[#e8ecf2] hidden sm:block" />
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-[#1a2744] flex items-center justify-center text-white">
-              <Shield size={14} />
+            <div className="px-3 h-8 rounded-lg bg-[#1a2744] flex items-center justify-center text-white text-xs font-bold tracking-wider">
+              ID-{ticket.id}
             </div>
-            <div className="flex flex-col">
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-bold text-[#8c9bba] uppercase tracking-wider">Admin Panel</span>
-                <span className="text-[10px] font-bold text-[#0e12ffff] bg-blue-50 px-2 py-0.5 rounded-lg border border-blue-100">
-                  ID-{ticket.id}
-                </span>
-                {ticket.category && (
-                  <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-100 flex items-center gap-1">
-                    <Tag size={10} />
-                    {ticket.category}
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-sm sm:text-base font-bold text-[#1a2744] truncate max-w-[200px] sm:max-w-md">{ticket.title}</h1>
-                <span className="hidden sm:inline text-xs font-medium text-[#8c9bba]">by {reporter?.full_name || reporter?.email?.split('@')[0] || (ticket.user_id ? `HCDC Associate (${String(ticket.user_id).substring(0, 8)})` : "Guest User")}</span>
-              </div>
+            <div className="flex flex-col justify-center">
+              <span className="text-[10px] font-bold text-[#8c9bba] uppercase tracking-wider mb-0.5">Admin Panel</span>
+              <h1 className="text-sm sm:text-base font-bold text-[#1a2744] truncate max-w-[200px] sm:max-w-md leading-none">{ticket.title}</h1>
             </div>
           </div>
         </div>

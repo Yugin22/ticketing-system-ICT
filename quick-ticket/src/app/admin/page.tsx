@@ -80,6 +80,7 @@ export default function AdminDashboard() {
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
 
   const [now, setNow] = useState<Date | null>(null);
 
@@ -317,7 +318,7 @@ export default function AdminDashboard() {
     return matchesFilter && matchesSearch;
   });
 
-  const handleLogout = async () => {
+  const handleConfirmLogout = async () => {
     await supabase.auth.signOut();
     router.push("/login");
   };
@@ -343,13 +344,13 @@ export default function AdminDashboard() {
           <nav className="flex-1 space-y-2">
             <NavItem icon={<LayoutDashboard size={18} />} label="Analytics" active onClick={() => router.push("/admin")} />
             <NavItem icon={<Ticket size={18} />} label="All Tickets" onClick={() => router.push("/admin/tickets")} />
-            <NavItem icon={<Activity size={18} />} label="Service Health" onClick={() => { }} />
+            <NavItem icon={<Activity size={18} />} label="Request" onClick={() => router.push("/admin/requests")} />
             <NavItem icon={<Calendar size={18} />} label="Schedules" onClick={() => { }} />
           </nav>
 
           <div className="mt-auto pt-6 border-t border-[#e8ecf2]">
             <button
-              onClick={handleLogout}
+              onClick={() => setShowLogoutModal(true)}
               className="flex items-center gap-3 w-full p-3 rounded-xl text-red-500 font-bold text-sm hover:bg-red-50 transition-all active:scale-95"
             >
               <LogOut size={18} /> Logout
@@ -596,8 +597,6 @@ export default function AdminDashboard() {
                             <span className="text-sm font-bold truncate max-w-[200px]">{t.title}</span>
                             <div className="flex items-center gap-2">
                               <span className="text-[10px] font-bold text-[#8c9bba]">{t.request_type || "Incident Report"}</span>
-                              <span className="w-1 h-1 rounded-full bg-[#f0f3f8]" />
-                              <span className="text-[10px] font-bold text-[#1a2744] opacity-80">by {t.profiles?.full_name || t.profiles?.email?.split('@')[0] || (t.user_id ? `HCDC Associate (${String(t.user_id).substring(0, 8)})` : "Guest User")}</span>
                             </div>
                           </div>
                         </td>
@@ -652,6 +651,35 @@ export default function AdminDashboard() {
 
         </div>
       </main>
+
+      {/* LOGOUT CONFIRMATION MODAL */}
+      {showLogoutModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-[#1a2744]/40 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white p-6 rounded-3xl shadow-2xl max-w-sm w-full animate-fade-in-up">
+            <div className="w-12 h-12 rounded-full bg-red-50 text-red-500 flex items-center justify-center mb-4 mx-auto">
+              <LogOut size={24} />
+            </div>
+            <h3 className="text-xl font-bold text-center text-[#1a2744] mb-2">Confirm Logout</h3>
+            <p className="text-sm text-[#8c9bba] text-center font-medium mb-6">
+              Are you sure you want to log out? You will need to sign in again to access the admin dashboard.
+            </p>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setShowLogoutModal(false)}
+                className="flex-1 py-3 rounded-xl bg-[#f0f3f8] text-[#1a2744] font-bold text-sm hover:bg-[#e8ecf2] transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmLogout}
+                className="flex-1 py-3 rounded-xl bg-red-500 text-white font-bold text-sm hover:bg-red-600 transition-colors shadow-lg shadow-red-500/30"
+              >
+                Log Out
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -60,47 +60,17 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
 
   useEffect(() => {
     // 1. Setup subscription synchronously to avoid "after subscribe" race conditions
-    const uniqueChannelName = `ticket-detail-subscription-${ticketId}-${Date.now()}`;
-    const channel = supabase
-      .channel(uniqueChannelName)
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "ticket_comments",
-          filter: `ticket_id=eq.${ticketId}`,
-        },
-        async (payload: any) => {
-          // Fetch new comment basic data
-          const { data: commentData } = await supabase
-            .from("ticket_comments")
-            .select("*")
-            .eq("id", payload.new.id)
-            .single();
+    const uniqueChannelName = `ticket-room-${ticketId}`;
+    const channel = supabase.channel(uniqueChannelName);
 
-          if (commentData) {
-            // Fetch profile separately
-            const { data: profileData } = await supabase
-              .from("profiles")
-              .select("id, full_name, avatar_url, role")
-              .eq("id", commentData.user_id)
-              .single();
-
-            const fullComment = {
-              ...commentData,
-              profiles: profileData || null
-            };
-
-            setComments(prev => {
-              if (prev.some(c => c.id === fullComment.id)) return prev;
-              const newComments = [...prev, fullComment as any];
-              return newComments.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-            });
-          }
-        }
-      )
-      .subscribe();
+    channel.on(
+      "broadcast",
+      { event: "new_comment" },
+      () => {
+        console.log("Broadcast received! Fetching new comments...");
+        fetchComments();
+      }
+    ).subscribe();
 
     // 2. Fetch initial data
     initPage();
@@ -209,6 +179,14 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
 
       if (error) throw error;
       setNewComment("");
+      await fetchComments();
+
+      // Send broadcast to instantly notify the admin side
+      await supabase.channel(`ticket-room-${ticketId}`).send({
+        type: "broadcast",
+        event: "new_comment",
+        payload: { ticketId },
+      });
 
       // If we (an admin) are replying, mark the ticket as having an unread admin reply for the user
       if (currentUserProfile?.role === 'admin') {
@@ -279,17 +257,17 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
         <div className="flex items-center gap-3">
           {user && (
             <div className="flex items-center gap-2 pr-3 sm:pr-4 border-r border-[#e8ecf2] mr-1 sm:mr-2">
-               <div className="w-8 h-8 rounded-full bg-[#1a2744] text-white flex items-center justify-center text-[10px] font-bold">
-                  {(user.user_metadata?.full_name || user.email || "U").charAt(0).toUpperCase()}
-               </div>
-               <div className="flex flex-col hidden sm:flex">
-                  <span className="text-[10px] font-bold text-[#1a2744] leading-tight">
-                      {user.user_metadata?.full_name || user.email?.split("@")[0]}
-                  </span>
-                  <span className="text-[9px] text-[#8c9bba] leading-tight">
-                      {user.email}
-                  </span>
-               </div>
+              <div className="w-8 h-8 rounded-full bg-[#1a2744] text-white flex items-center justify-center text-[10px] font-bold">
+                {(user.user_metadata?.full_name || user.email || "U").charAt(0).toUpperCase()}
+              </div>
+              <div className="flex flex-col hidden sm:flex">
+                <span className="text-[10px] font-bold text-[#1a2744] leading-tight">
+                  {user.user_metadata?.full_name || user.email?.split("@")[0]}
+                </span>
+                <span className="text-[9px] text-[#8c9bba] leading-tight">
+                  {user.email}
+                </span>
+              </div>
             </div>
           )}
           <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full border border-opacity-50 ${statusStyle.bg} ${statusStyle.text}`}>
