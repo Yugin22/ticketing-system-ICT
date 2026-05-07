@@ -32,7 +32,8 @@ import {
   Trash2,
   CheckSquare,
   AlertTriangle,
-  Loader2
+  Loader2,
+  Megaphone
 } from "lucide-react";
 
 /* ---------------- TYPES ---------------- */
@@ -93,10 +94,16 @@ export default function AllTicketsAdmin() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalTitle, setModalTitle] = useState("");
   const [modalCategory, setModalCategory] = useState("");
+  const [modalMode, setModalMode] = useState("Assigned by Staff");
   const [modalDescription, setModalDescription] = useState("");
   const [modalSubmitting, setModalSubmitting] = useState(false);
   const [modalError, setModalError] = useState("");
   const [modalSuccess, setModalSuccess] = useState("");
+
+  // Delete Modal States
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [ticketToDelete, setTicketToDelete] = useState<string | number | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Multi-select
   const [selectedTickets, setSelectedTickets] = useState<Set<string | number>>(new Set());
@@ -241,7 +248,10 @@ export default function AllTicketsAdmin() {
 
   const handleCreateIncident = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!modalTitle || !modalDescription || !modalCategory) {
+    console.log("Submit Incident clicked", { modalTitle, modalDescription, modalCategory, modalMode });
+    
+    if (!modalTitle || !modalDescription || !modalCategory || !modalMode) {
+      console.warn("Validation failed: missing fields");
       setModalError("Please fill out all required fields.");
       return;
     }
@@ -251,6 +261,7 @@ export default function AllTicketsAdmin() {
       setModalError("");
 
       const { data: userData } = await supabase.auth.getUser();
+      console.log("User data:", userData);
       if (!userData.user) {
         setModalError("You must be logged in.");
         return;
@@ -277,35 +288,70 @@ export default function AllTicketsAdmin() {
         assignedTo = bestStaff.id;
       }
 
-      const newTicket = {
+      const newTicket: any = {
         title: modalTitle,
         description: modalDescription,
         status: "Open",
         category: modalCategory,
+        mode: modalMode,
         user_id: userData.user.id,
         assigned_to: assignedTo,
         request_type: "Incident"
       };
 
+      console.log("Attempting to insert ticket:", newTicket);
       const { error: insertError } = await supabase.from("tickets").insert([newTicket]);
+
       if (insertError) {
-        setModalError(insertError.message);
+        console.error("Insert error details:", JSON.stringify(insertError, null, 2));
+        
+        // Handle missing columns (request_type or mode)
+        const errorMessage = insertError.message || "";
+        if (errorMessage.includes("request_type") || errorMessage.includes("mode") || insertError.code === 'PGRST204') {
+          console.warn("Detected missing columns in DB. Retrying without optional fields...");
+          
+          const fallbackTicket: any = {
+            title: modalTitle,
+            description: modalDescription,
+            status: "Open",
+            category: modalCategory,
+            user_id: userData.user.id,
+            assigned_to: assignedTo
+          };
+
+          const { error: retryError } = await supabase.from("tickets").insert([fallbackTicket]);
+          
+          if (retryError) {
+             setModalError(`Failed even with fallback: ${retryError.message}`);
+          } else {
+            setModalSuccess("Incident created! (Warning: Your database is missing the 'mode' column, so it saved as 'Portal')");
+            finishSuccess();
+          }
+        } else {
+          setModalError(errorMessage || "An unknown database error occurred.");
+        }
       } else {
         setModalSuccess("Incident created successfully!");
-        setModalTitle("");
-        setModalDescription("");
-        setModalCategory("");
-        await fetchTickets();
-        setTimeout(() => {
-          setModalSuccess("");
-          setIsModalOpen(false);
-        }, 1500);
+        finishSuccess();
       }
     } catch (err: any) {
+      console.error("Catch block error:", err);
       setModalError(err.message || "An error occurred");
     } finally {
       setModalSubmitting(false);
     }
+  };
+
+  const finishSuccess = async () => {
+    setModalTitle("");
+    setModalDescription("");
+    setModalCategory("");
+    setModalMode("Assigned by Staff");
+    await fetchTickets();
+    setTimeout(() => {
+      setModalSuccess("");
+      setIsModalOpen(false);
+    }, 2000);
   };
 
   const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -425,6 +471,47 @@ export default function AllTicketsAdmin() {
       }
     } finally {
       setRefreshing(false);
+    }
+  };
+
+  const handleUpdateMode = async (ticketId: string | number, newMode: string) => {
+    try {
+      setRefreshing(true);
+      const { error } = await supabase
+        .from("tickets")
+        .update({ mode: newMode })
+        .eq("id", ticketId);
+
+      if (error && error.code === 'PGRST204' && error.message.includes('mode')) {
+        alert("Warning: The 'mode' column is missing from your database. You cannot update the Request Mode until the column is added to the 'tickets' table.");
+      } else if (error) {
+        console.error("Update mode error:", error);
+      } else {
+        await fetchTickets();
+      }
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const handleDeleteTicket = async () => {
+    if (!ticketToDelete) return;
+    try {
+      setIsDeleting(true);
+      const { error } = await supabase
+        .from("tickets")
+        .delete()
+        .eq("id", ticketToDelete);
+
+      if (error) {
+        alert(`Error deleting ticket: ${error.message}`);
+      } else {
+        await fetchTickets();
+        setShowDeleteModal(false);
+        setTicketToDelete(null);
+      }
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -567,6 +654,7 @@ export default function AllTicketsAdmin() {
                   <th className="px-4 py-5 text-[11px] font-black uppercase tracking-widest text-[#8c9bba]">Ticket ID</th>
                   <th className="px-4 py-5 text-[11px] font-black uppercase tracking-widest text-[#8c9bba]">Subject & Detail</th>
                   <th className="px-4 py-5 text-[11px] font-black uppercase tracking-widest text-[#8c9bba]">Status</th>
+                  <th className="px-4 py-5 text-[11px] font-black uppercase tracking-widest text-[#8c9bba]">Request Mode</th>
                   <th className="px-4 py-5 text-[11px] font-black uppercase tracking-widest text-[#8c9bba]">Category</th>
                   <th className="px-4 py-5 text-[11px] font-black uppercase tracking-widest text-[#8c9bba]">Priority</th>
                   <th className="px-4 py-5 text-[11px] font-black uppercase tracking-widest text-[#8c9bba]">Reporter</th>
@@ -576,10 +664,10 @@ export default function AllTicketsAdmin() {
               </thead>
               <tbody className="divide-y divide-[#f0f3f8]">
                 {loading ? (
-                  <tr><td colSpan={8} className="p-20 text-center font-bold text-[#8c9bba] animate-pulse">Synchronizing records...</td></tr>
+                  <tr><td colSpan={9} className="p-20 text-center font-bold text-[#8c9bba] animate-pulse">Synchronizing records...</td></tr>
                 ) : filteredTickets.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="p-32 text-center">
+                    <td colSpan={9} className="p-32 text-center">
                       <div className="flex flex-col items-center justify-center gap-4 animate-fade-in-up">
                         <div className="w-20 h-20 rounded-[2rem] bg-[#f8f9fc] flex items-center justify-center text-[#8c9bba]">
                           <Search size={40} strokeWidth={1.5} opacity={0.3} />
@@ -624,6 +712,11 @@ export default function AllTicketsAdmin() {
                         <div className={`px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider inline-flex items-center gap-1.5 border ${getStatusStyle(t.status)}`}>
                           {getStatusIcon(t.status)}
                           {t.status}
+                        </div>
+                      </td>
+                      <td className="px-4 py-5">
+                        <div className="px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider inline-flex items-center gap-1.5 border bg-indigo-50 text-indigo-600 border-indigo-100 shadow-sm">
+                          {t.mode || "Portal"}
                         </div>
                       </td>
                       <td className="px-4 py-5">
@@ -700,6 +793,17 @@ export default function AllTicketsAdmin() {
                           title={t.status === "Resolved" ? "Undo Resolve" : "Mark as Resolved"}
                         >
                           <CheckSquare size={16} />
+                        </button>
+
+                        <button
+                          onClick={() => {
+                            setTicketToDelete(t.id);
+                            setShowDeleteModal(true);
+                          }}
+                          className="p-2 rounded-xl bg-red-50 text-red-500 hover:bg-red-500 hover:text-white transition-all active:scale-90"
+                          title="Delete Ticket"
+                        >
+                          <Trash2 size={16} />
                         </button>
 
                         <button
@@ -840,6 +944,29 @@ export default function AllTicketsAdmin() {
 
                     <div className="flex flex-col">
                       <label className="text-[11px] sm:text-xs font-semibold uppercase tracking-wider mb-2 text-[#8c9bba]">
+                        Request Mode <span className="text-[#e91e1eff]">*</span>
+                      </label>
+                      <div className="relative">
+                        <select
+                          value={modalMode}
+                          disabled={modalSubmitting}
+                          onChange={(e) => setModalMode(e.target.value)}
+                          required
+                          className="w-full p-4 appearance-none rounded-2xl outline-none transition-all text-sm font-medium bg-[#f8f9fc] text-[#1a2744] border border-[#e8ecf2] focus:border-[#0e12ffff] focus:bg-white focus:shadow-[0_0_0_4px_rgba(14,18,255,0.1)] cursor-pointer"
+                        >
+                          <option value="Self-Service Portal">Self-Service Portal</option>
+                          <option value="Email">Email</option>
+                          <option value="Assigned by Staff">Assigned by Staff</option>
+                          <option value="Request Letter">Request Letter</option>
+                          <option value="Walk-in">Walk-in</option>
+                          <option value="Phone Call/Text">Phone Call/Text</option>
+                        </select>
+                        <ChevronDown size={18} className="absolute right-4 top-1/2 -translate-y-1/2 text-[#8c9bba] pointer-events-none" />
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col">
+                      <label className="text-[11px] sm:text-xs font-semibold uppercase tracking-wider mb-2 text-[#8c9bba]">
                         Request Type
                       </label>
                       <div className="relative">
@@ -891,6 +1018,37 @@ export default function AllTicketsAdmin() {
                     </button>
                   </div>
                 </form>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* DELETE CONFIRMATION MODAL */}
+        {showDeleteModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-[#1a2744]/40 backdrop-blur-sm animate-fade-in">
+            <div className="bg-white p-8 rounded-[2.5rem] shadow-2xl max-w-sm w-full animate-fade-in-up border border-red-100">
+              <div className="w-16 h-16 rounded-full bg-red-50 text-red-500 flex items-center justify-center mb-6 mx-auto">
+                <Trash2 size={32} />
+              </div>
+              <h3 className="text-2xl font-bold text-center text-[#1a2744] mb-2">Delete Ticket?</h3>
+              <p className="text-sm text-[#8c9bba] text-center font-medium mb-8 leading-relaxed">
+                Are you sure you want to delete <span className="font-bold text-[#1a2744]">Ticket ID-{ticketToDelete}</span>? This action cannot be undone.
+              </p>
+              <div className="flex items-center gap-3">
+                <button
+                  disabled={isDeleting}
+                  onClick={() => setShowDeleteModal(false)}
+                  className="flex-1 py-4 rounded-2xl bg-[#f0f3f8] text-[#1a2744] font-bold text-sm hover:bg-[#e8ecf2] transition-all active:scale-95 disabled:opacity-50"
+                >
+                  No, Cancel
+                </button>
+                <button
+                  disabled={isDeleting}
+                  onClick={handleDeleteTicket}
+                  className="flex-1 py-4 rounded-2xl bg-red-500 text-white font-bold text-sm hover:bg-red-600 transition-all shadow-lg shadow-red-500/30 active:scale-95 flex items-center justify-center gap-2 disabled:opacity-70"
+                >
+                  {isDeleting ? <Loader2 size={18} className="animate-spin" /> : "Yes, Delete"}
+                </button>
               </div>
             </div>
           </div>
@@ -957,12 +1115,12 @@ function getStatusIcon(status: string) {
 
 function getStatusStyle(status: string) {
   switch (status) {
-    case "Open": return "bg-red-50 text-red-600 border-red-100";
+    case "Open": return "bg-[#fef2f2] text-[#7f1d1d] border-[#fecaca]";
     case "Work in Progress":
-    case "In Progress": return "bg-blue-50 text-blue-600 border-blue-100";
-    case "Resolved": return "bg-emerald-50 text-emerald-600 border-emerald-100";
-    case "On Hold": return "bg-gray-50 text-[#8c9bba] border-gray-100";
-    case "Closed": return "bg-[#1a2744] text-white border-white/20";
+    case "In Progress": return "bg-[#fefce8] text-[#854d0e] border-[#fef08a]";
+    case "Resolved": return "bg-[#f0fdf4] text-[#166534] border-[#bbf7d0]";
+    case "On Hold": return "bg-[#f3f4f6] text-[#000000] border-[#000000]";
+    case "Closed": return "bg-[#f9fafb] text-[#374151] border-[#d1d5db]";
     default: return "bg-gray-50 text-[#1a2744] border-gray-100";
   }
 }

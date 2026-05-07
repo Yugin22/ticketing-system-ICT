@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, use } from "react";
+import { useEffect, useState, use, useRef } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -17,7 +17,8 @@ import {
   Loader2,
   Shield,
   Menu,
-  X
+  X,
+  ChevronDown
 } from "lucide-react";
 
 type CommentType = {
@@ -57,6 +58,35 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
   const [currentUserProfile, setCurrentUserProfile] = useState<any>(null);
   const [reporterProfile, setReporterProfile] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showScrollButton, setShowScrollButton] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll to bottom on new messages
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTo({
+        top: scrollRef.current.scrollHeight,
+        behavior: "smooth"
+      });
+    }
+  }, [comments]);
+
+  const handleScroll = () => {
+    if (scrollRef.current) {
+      const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
+      const isNearBottom = scrollHeight - scrollTop - clientHeight < 200;
+      setShowScrollButton(!isNearBottom);
+    }
+  };
+
+  const scrollToBottom = () => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTo({
+        top: scrollRef.current.scrollHeight,
+        behavior: "smooth"
+      });
+    }
+  };
 
   useEffect(() => {
     // 1. Setup subscription synchronously to avoid "after subscribe" race conditions
@@ -205,10 +235,10 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
 
   const getStatusStyle = (status: string) => {
     const map: Record<string, { bg: string, text: string, icon: any }> = {
-      "Open": { bg: "bg-gray-100", text: "text-black", icon: <CircleDot size={14} /> },
-      "In Progress": { bg: "bg-blue-50", text: "text-blue-600", icon: <Clock size={14} /> },
-      "Resolved": { bg: "bg-emerald-50", text: "text-emerald-600", icon: <CheckCircle2 size={14} /> },
-      "Closed": { bg: "bg-gray-50", text: "text-gray-500", icon: <CheckCircle2 size={14} /> },
+      "Open": { bg: "bg-[#fef2f2]", text: "text-[#7f1d1d]", icon: <CircleDot size={14} /> },
+      "In Progress": { bg: "bg-[#fefce8]", text: "text-[#854d0e]", icon: <Clock size={14} /> },
+      "Resolved": { bg: "bg-[#f0fdf4]", text: "text-[#166534]", icon: <CheckCircle2 size={14} /> },
+      "Closed": { bg: "bg-[#f9fafb]", text: "text-[#374151]", icon: <CheckCircle2 size={14} /> },
     };
     return map[status] || { bg: "bg-gray-100", text: "text-gray-600", icon: <CircleDot size={14} /> };
   };
@@ -320,7 +350,7 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                 <Tag size={18} className="text-red-600" />
                 Issue Description
               </h2>
-              <div className="p-6 rounded-3xl bg-[#f8f9fc] border border-[#e8ecf2] text-[#1a2744] leading-relaxed whitespace-pre-wrap text-sm sm:text-base">
+              <div className="p-6 rounded-3xl bg-[#f8f9fc] border border-[#e8ecf2] text-[#1a2744] leading-relaxed whitespace-pre-wrap text-sm sm:text-base break-words overflow-hidden">
                 {ticket.description}
               </div>
             </div>
@@ -336,52 +366,85 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
               <span className="text-xs font-medium text-red-500 bg-white px-2 py-0.5 rounded-full border border-red-500">{comments.length}</span>
             </h3>
 
-            <div className="flex flex-col gap-6">
-              {comments.length === 0 ? (
-                <div className="bg-white rounded-[2rem] p-12 text-center border border-dashed border-[#8c9bba]/30">
-                  <div className="w-16 h-16 bg-[#f8f9fc] rounded-full flex items-center justify-center mx-auto mb-4 text-[#8c9bba]">
-                    <MessageSquare size={32} opacity={0.3} />
-                  </div>
-                  <p className="text-sm font-bold text-[#1a2744]">No replies yet</p>
-                  <p className="text-xs text-[#8c9bba] mt-1">Be the first to leave a message in this conversation.</p>
-                </div>
-              ) : (
-                comments.map((comment, index) => {
-                  const isCurrentAuthor = comment.user_id === user?.id;
-                  const isStaff = comment.profiles?.role === "admin";
-
-                  return (
-                    <div
-                      key={comment.id}
-                      className={`flex flex-col gap-2 animate-fade-in-up`}
-                      style={{ animationDelay: `${index * 50}ms` }}
-                    >
-                      <div className={`flex items-start gap-4 ${isCurrentAuthor ? 'flex-row-reverse' : 'flex-row'}`}>
-                        <div className={`flex-shrink-0 w-10 h-10 rounded-2xl flex items-center justify-center text-white font-bold text-sm shadow-md transition-transform hover:scale-110 ${isStaff ? 'bg-gradient-to-br from-[#1a2744] to-[#0e12ffff]' : 'bg-gradient-to-br from-indigo-400 to-indigo-600'}`}>
-                          {comment.profiles?.full_name?.charAt(0).toUpperCase() || 'U'}
-                        </div>
-
-                        <div className={`max-w-[85%] sm:max-w-[70%] flex flex-col ${isCurrentAuthor ? 'items-end' : 'items-start'}`}>
-                          <div className="flex items-center gap-2 mb-1 px-1">
-                            <span className="text-[11px] font-bold text-[#1a2744]">
-                              {isCurrentAuthor ? 'You' : comment.profiles?.full_name}
-                            </span>
-                            {isStaff && (
-                              <span className="text-[9px] font-bold bg-[#1a2744] text-white px-1.5 py-0.5 rounded uppercase tracking-tighter">Staff</span>
-                            )}
-                            <span className="text-[10px] text-[#8c9bba]">
-                              {new Date(comment.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                            </span>
-                          </div>
-
-                          <div className={`px-5 py-4 rounded-[2rem] text-sm leading-relaxed shadow-sm transition-all duration-300 hover:shadow-md ${isCurrentAuthor ? 'bg-[#1a2744] text-white rounded-tr-none' : 'bg-white text-[#1a2744] border border-[#e8ecf2] rounded-tl-none'}`}>
-                            {comment.content}
-                          </div>
-                        </div>
-                      </div>
+            <div className="relative">
+              <div
+                ref={scrollRef}
+                onScroll={handleScroll}
+                className="flex flex-col gap-6 max-h-[550px] min-h-[300px] overflow-y-auto p-6 sm:p-8 rounded-[2.5rem] bg-white border border-[#e8ecf2] shadow-[inset_0_2px_10px_rgba(0,0,0,0.02)] scroll-smooth custom-scrollbar"
+              >
+                {comments.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-20 text-center">
+                    <div className="w-20 h-20 bg-[#f8f9fc] rounded-full flex items-center justify-center mb-4 text-[#8c9bba] border border-dashed border-[#8c9bba]/30">
+                      <MessageSquare size={32} opacity={0.3} />
                     </div>
-                  );
-                })
+                    <p className="text-sm font-bold text-[#1a2744]">No replies yet</p>
+                    <p className="text-xs text-[#8c9bba] mt-1">Be the first to leave a message in this conversation.</p>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-8">
+                    {comments
+                      .filter(c => !c.content.startsWith("[System Update"))
+                      .map((comment, index) => {
+                        const isCurrentAuthor = comment.user_id === user?.id;
+                        const isStaff = comment.profiles?.role === "admin";
+
+                        return (
+                          <div
+                            key={comment.id}
+                            className={`flex flex-col gap-2 animate-fade-in-up`}
+                            style={{ animationDelay: `${index * 50}ms` }}
+                          >
+                            <div className={`flex items-start gap-3 ${isCurrentAuthor ? "flex-row-reverse" : "flex-row"}`}>
+                              <div
+                                className={`flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-white font-bold text-xs shadow-sm transition-all hover:scale-110 ${isStaff ? "bg-[#1a2744]" : "bg-indigo-500"}`}
+                              >
+                                {comment.profiles?.full_name?.charAt(0).toUpperCase() || "U"}
+                              </div>
+
+                              <div className={`flex flex-col ${isCurrentAuthor ? "items-end" : "items-start"}`}>
+                                <div className="flex items-center gap-2 mb-1.5 px-1">
+                                  <span className="text-[11px] font-bold text-[#1a2744]">
+                                    {isCurrentAuthor ? "You" : (comment.profiles?.full_name || "User")}
+                                  </span>
+                                  {isStaff && (
+                                    <div className="flex items-center gap-1 bg-[#1a2744]/5 px-1.5 py-0.5 rounded text-[8px] font-black text-[#1a2744] uppercase tracking-tighter">
+                                      <Shield size={8} /> STAFF
+                                    </div>
+                                  )}
+                                  <span className="text-[10px] text-[#8c9bba] font-medium">
+                                    {new Date(comment.created_at).toLocaleTimeString([], {
+                                      hour: "2-digit",
+                                      minute: "2-digit",
+                                    })}
+                                  </span>
+                                </div>
+
+                                <div
+                                  className={`px-5 py-3.5 rounded-3xl text-sm leading-relaxed shadow-sm transition-all duration-300 hover:shadow-md max-w-[90%] sm:max-w-[450px] ${isCurrentAuthor
+                                    ? "bg-[#1a2744] text-white rounded-tr-none"
+                                    : "bg-[#f8f9fc] text-[#1a2744] border border-[#e8ecf2] rounded-tl-none"
+                                    }`}
+                                >
+                                  {comment.content}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                )}
+              </div>
+
+              {/* SCROLL TO BOTTOM BUTTON */}
+              {showScrollButton && (
+                <button
+                  onClick={scrollToBottom}
+                  className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-white/90 backdrop-blur-md border border-[#e8ecf2] text-[#1a2744] px-4 py-2 rounded-full shadow-xl flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest hover:bg-[#1a2744] hover:text-white transition-all animate-bounce z-20"
+                >
+                  <ChevronDown size={14} />
+                  New Messages Below
+                </button>
               )}
             </div>
 
@@ -396,7 +459,7 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
                     value={newComment}
                     onChange={(e) => setNewComment(e.target.value)}
                     placeholder="Write a message..."
-                    className="w-full mt-5 bg-transparent border-none outline-none text-sm px-2 resize-none max-h-32 min-h-[44px] overflow-hidden"
+                    className="w-full py-4 bg-transparent border-none outline-none text-sm px-2 resize-none max-h-32 min-h-[44px] overflow-hidden flex items-center"
                     disabled={submitting}
                   />
                 </div>

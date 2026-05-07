@@ -35,6 +35,8 @@ import {
   Lock,
   Globe,
   Smartphone,
+  Megaphone,
+  Activity
 } from "lucide-react";
 
 type UserType = {
@@ -75,6 +77,7 @@ export default function DashboardPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [view, setView] = useState("home");
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [viewingTicket, setViewingTicket] = useState<TicketType | null>(null);
 
   const [stats, setStats] = useState<StatsType>({
     closed: 0,
@@ -85,6 +88,8 @@ export default function DashboardPage() {
   });
 
   const [tickets, setTickets] = useState<TicketType[]>([]);
+  const [announcements, setAnnouncements] = useState<any[]>([]);
+  const [loadingAnnouncements, setLoadingAnnouncements] = useState(false);
 
   useEffect(() => {
     let channel: ReturnType<typeof supabase.channel> | null = null;
@@ -93,11 +98,15 @@ export default function DashboardPage() {
       const { data } = await supabase.auth.getUser();
       if (!data.user) { router.replace("/login"); return; }
       await initUser();
-      supabase.removeChannel(supabase.channel("tickets-changes"));
+      
+      const channelName = `dashboard-changes-${Date.now()}`;
       channel = supabase
-        .channel("tickets-changes")
+        .channel(channelName)
         .on("postgres_changes", { event: "*", schema: "public", table: "tickets" }, () => {
           initUser();
+        })
+        .on("postgres_changes", { event: "INSERT", schema: "public", table: "announcements" }, () => {
+          fetchLatestAnnouncements();
         })
         .subscribe();
     };
@@ -182,6 +191,7 @@ export default function DashboardPage() {
       const tix = ticketData || [];
       console.log("Supabase Data Debug - Tickets fetched for user:", currentUser.id, "Count:", tix.length, "Tickets:", tix);
       setTickets(tix);
+      fetchLatestAnnouncements();
       setStats({
         closed: tix.filter(t => t.status === "Closed").length,
         open: tix.filter(t => t.status === "Open").length,
@@ -204,7 +214,38 @@ export default function DashboardPage() {
   const refreshDashboard = async () => {
     setRefreshing(true);
     await initUser();
+    await fetchLatestAnnouncements();
     setRefreshing(false);
+  };
+
+  const fetchLatestAnnouncements = async () => {
+    try {
+      setLoadingAnnouncements(true);
+      const { data: userTickets } = await supabase.from("tickets").select("id").eq("user_id", user?.id);
+      const ticketIds = (userTickets || []).map(t => String(t.id)).filter(Boolean);
+
+      if (ticketIds.length === 0) {
+        setAnnouncements([]);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("announcements")
+        .select(`
+          id, ticket_id, content, status, created_at,
+          tickets (title, id)
+        `)
+        .in("ticket_id", ticketIds)
+        .order("created_at", { ascending: false })
+        .limit(3);
+
+      if (error) throw error;
+      setAnnouncements(data || []);
+    } catch (err) {
+      console.error("Error fetching latest announcements:", err instanceof Error ? err.message : err, err);
+    } finally {
+      setLoadingAnnouncements(false);
+    }
   };
 
   const firstName = user?.email?.split("@")[0] ?? "User";
@@ -237,6 +278,7 @@ export default function DashboardPage() {
     { id: "home", icon: <House size={18} />, label: "Home" },
     { id: "requests", icon: <ClipboardList size={18} />, label: "Requests" },
     { id: "tickets", icon: <Ticket size={18} />, label: "Tickets" },
+    { id: "announcements", icon: <Megaphone size={18} />, label: "Notices" },
   ];
 
   return (
@@ -470,31 +512,147 @@ export default function DashboardPage() {
 
         {/* ── PAGE CONTENT — scrollable area within remaining height ── */}
         <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8" style={{ background: "#f8f9fc" }}>
-          {view === "home" && <DashboardHome user={user} stats={stats} tickets={tickets} refreshing={refreshing} />}
+          {view === "home" && (
+            <DashboardHome
+              user={user}
+              stats={stats}
+              tickets={tickets}
+              refreshing={refreshing}
+              announcements={announcements}
+              loadingAnnouncements={loadingAnnouncements}
+            />
+          )}
           {view === "requests" && <RequestsPage tickets={tickets} refreshing={refreshing} />}
-          {view === "tickets" && <TicketsPage tickets={tickets} refreshing={refreshing} />}
+          {view === "tickets" && <TicketsPage tickets={tickets} refreshing={refreshing} setViewingTicket={setViewingTicket} />}
+          {view === "announcements" && <AnnouncementsView user={user} tickets={tickets} />}
           {view === "profile" && <ProfilePage user={user ?? undefined} stats={stats} onUpdate={initUser} />}
         </main>
 
-        {/* ── MOBILE BOTTOM NAV ── */}
-        <nav
-          className="md:hidden flex items-center justify-around flex-shrink-0 py-2 bg-white"
-          style={{ borderTop: "1px solid #e8ecf2" }}
-        >
-          {navItems.slice(0, 4).map(item => (
-            <button
-              key={item.id}
-              onClick={() => setView(item.id)}
-              className="flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl transition-all"
-              style={{
-                color: view === item.id ? "#dc2626" : "#6b7fa3",
-              }}
-            >
-              {item.icon}
-              <span className="text-[10px] font-medium">{item.label}</span>
-            </button>
-          ))}
-        </nav>
+      {/* MOBILE BOTTOM NAV ... */}
+      <nav
+        className="md:hidden flex items-center justify-around flex-shrink-0 py-2 bg-white"
+        style={{ borderTop: "1px solid #e8ecf2" }}
+      >
+        {navItems.slice(0, 4).map(item => (
+          <button
+            key={item.id}
+            onClick={() => setView(item.id)}
+            className="flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl transition-all"
+            style={{
+              color: view === item.id ? "#dc2626" : "#6b7fa3",
+            }}
+          >
+            {item.icon}
+            <span className="text-[10px] font-medium">{item.label}</span>
+          </button>
+        ))}
+      </nav>
+
+      {/* FULL SCREEN MODAL PORTAL-LIKE RENDERING */}
+      {viewingTicket && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 transition-opacity bg-[#1a2744]/60 backdrop-blur-md"
+            onClick={() => setViewingTicket(null)}
+          />
+          <div
+            className="relative bg-white rounded-[2.5rem] w-full max-w-xl overflow-hidden shadow-2xl animate-fade-in-up border border-[#e8ecf2]"
+          >
+            <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-[#1a2744] via-[#0e12ffff] to-[#e91e1eff]" />
+
+            <div className="p-6 sm:p-10 flex flex-col gap-8">
+              {/* Header */}
+              <div className="flex items-start justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="w-14 h-14 rounded-2xl bg-indigo-50 flex items-center justify-center text-indigo-600 shadow-sm border border-indigo-100 flex-shrink-0">
+                    <Ticket size={28} strokeWidth={1.5} />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-black uppercase tracking-widest text-[#8c9bba]">Case Detail</span>
+                      <span className="px-2 py-0.5 rounded-lg bg-[#f8f9fc] border border-[#e8ecf2] text-[9px] font-bold text-[#1a2744]">
+                        ID- {viewingTicket.id}
+                      </span>
+                    </div>
+                    <h3 className="text-xl font-bold text-[#1a2744] leading-tight">{viewingTicket.title}</h3>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setViewingTicket(null)}
+                  className="p-2 rounded-xl text-[#6b7fa3] hover:bg-[#f0f3f8] hover:text-[#1a2744] transition-all -mt-2 -mr-2"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Info Grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-6">
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-[#8c9bba]">Status</span>
+                  <div className="inline-flex">
+                    <StatusBadge status={viewingTicket.status} />
+                  </div>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-[#8c9bba]">Request Type</span>
+                  <span className="px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide bg-red-50 text-red-600 border border-red-100 w-max">
+                    {viewingTicket.request_type || "Incident"}
+                  </span>
+                </div>
+                <div className="flex flex-col gap-1.5 col-span-2 sm:col-span-1">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-[#8c9bba]">Date Created</span>
+                  <div className="flex items-center gap-2 text-sm font-bold text-[#1a2744]">
+                    <Calendar size={14} className="text-[#8c9bba]" />
+                    {new Date(viewingTicket.created_at).toLocaleDateString(undefined, {
+                      year: 'numeric',
+                      month: 'short',
+                      day: 'numeric'
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              {/* Description Section */}
+              <div className="bg-[#f8f9fc] rounded-[2rem] p-6 border border-[#eef1f6] shadow-inner relative overflow-hidden group/desc">
+                <div className="absolute top-4 right-4 text-[#8c9bba]/20 group-hover/desc:text-indigo-500/20 transition-colors">
+                  <Activity size={40} strokeWidth={1} />
+                </div>
+                <div className="text-[10px] font-black uppercase tracking-widest text-indigo-600 mb-4 flex items-center gap-2">
+                  <div className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
+                  Full Issue Description
+                </div>
+                <div className="max-h-[250px] overflow-y-auto scrollbar-thin pr-2">
+                  <p className="text-sm font-medium text-[#1a2744] leading-relaxed whitespace-pre-wrap break-words">
+                    {viewingTicket.description || "No detailed description was provided for this case."}
+                  </p>
+                </div>
+              </div>
+
+              {/* Footer Actions */}
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-2 border-t border-[#f0f3f8]">
+                <p className="text-[10px] font-medium text-[#8c9bba] italic">
+                  Viewing read-only snapshot of request detail
+                </p>
+                <div className="flex items-center gap-3 w-full sm:w-auto">
+                  <button
+                    onClick={() => setViewingTicket(null)}
+                    className="flex-1 sm:flex-none px-6 py-2.5 rounded-xl text-xs font-bold text-[#6b7fa3] bg-[#f0f3f8] hover:bg-[#e8ecf2] transition-all"
+                  >
+                    Close
+                  </button>
+                  <Link
+                    href={`/tickets/${viewingTicket.id}`}
+                    className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-8 py-2.5 rounded-xl text-xs font-bold text-white bg-[#1a2744] hover:bg-[#0e12ffff] transition-all active:scale-95 shadow-lg shadow-indigo-500/20"
+                  >
+                    Go to Ticket Details
+                    <ChevronRight size={14} />
+                  </Link>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       </div>
     </div>
   );
@@ -576,12 +734,12 @@ function StatCard({
 /* ──────────────────────────────────────────── */
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { bg: string; text: string; border: string }> = {
-    "Open": { bg: "#f5f5f5ff", text: "#1a2744", border: "#afafafff" },
-    "In Progress": { bg: "#eff3ff", text: "#2d4470", border: "#d0daf0" },
-    "Work in Progress": { bg: "#eff3ff", text: "#2d4470", border: "#d0daf0" },
-    "On Hold": { bg: "#f0f3f8", text: "#6b7fa3", border: "#dde3ef" },
-    "Resolved": { bg: "#eef4ff", text: "#1a2744", border: "#c8d8f0" },
-    "Closed": { bg: "#f8f9fc", text: "#6b7fa3", border: "#e0e5ef" },
+    "Open": { bg: "#fef2f2", text: "#7f1d1d", border: "#fecaca" },
+    "In Progress": { bg: "#fefce8", text: "#854d0e", border: "#fef08a" },
+    "Work in Progress": { bg: "#fefce8", text: "#854d0e", border: "#fef08a" },
+    "On Hold": { bg: "#f3f4f6", text: "#000000", border: "#000000" },
+    "Resolved": { bg: "#f0fdf4", text: "#166534", border: "#bbf7d0" },
+    "Closed": { bg: "#f9fafb", text: "#374151", border: "#d1d5db" },
   };
   const colors = map[status] ?? { bg: "#f0f3f8", text: "#6b7fa3", border: "#dde3ef" };
 
@@ -651,7 +809,16 @@ function SkeletonCard() {
 /* ──────────────────────────────────────────── */
 /*  DASHBOARD HOME VIEW                         */
 /* ──────────────────────────────────────────── */
-function DashboardHome({ user, stats, tickets, refreshing }: { user: UserType | null; stats: StatsType; tickets: TicketType[]; refreshing: boolean }) {
+function DashboardHome({
+  user, stats, tickets, refreshing, announcements, loadingAnnouncements
+}: {
+  user: UserType | null;
+  stats: StatsType;
+  tickets: TicketType[];
+  refreshing: boolean;
+  announcements?: any[];
+  loadingAnnouncements?: boolean;
+}) {
   const greeting = () => {
     const h = new Date().getHours();
     if (h < 12) return "Good morning";
@@ -697,46 +864,118 @@ function DashboardHome({ user, stats, tickets, refreshing }: { user: UserType | 
         ))}
       </div>
 
-      {/* ── RECENT TICKETS — fills remaining space ── */}
-      <div
-        className="bg-white rounded-2xl overflow-hidden flex flex-col min-h-0 flex-1"
-        style={{ border: "1px solid #e8ecf2" }}
-      >
-        <div className="flex items-center justify-between px-4 sm:px-5 py-3 sm:py-4 flex-shrink-0" style={{ borderBottom: "1px solid #f0f3f8" }}>
-          <div>
-            <h2 className="text-sm sm:text-base font-semibold" style={{ color: "#1a2744" }}>Recent Tickets</h2>
-            <p className="text-[10px] sm:text-xs mt-0.5" style={{ color: "#8c9bba" }}>
-              {tickets.length} total ticket{tickets.length !== 1 ? "s" : ""}
-            </p>
+      {/* ── CONTENT GRID ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1 min-h-0">
+        {/* RECENT TICKETS */}
+        <div
+          className="lg:col-span-7 bg-white rounded-2xl overflow-hidden flex flex-col min-h-[300px]"
+          style={{ border: "1px solid #e8ecf2" }}
+        >
+          <div className="flex items-center justify-between px-4 sm:px-5 py-3 sm:py-4 flex-shrink-0" style={{ borderBottom: "1px solid #f0f3f8" }}>
+            <div>
+              <h2 className="text-sm sm:text-base font-semibold" style={{ color: "#1a2744" }}>Recent Tickets</h2>
+              <p className="text-[10px] sm:text-xs mt-0.5" style={{ color: "#8c9bba" }}>
+                {tickets.length} total ticket{tickets.length !== 1 ? "s" : ""}
+              </p>
+            </div>
           </div>
-          <button
-            className="flex items-center gap-1 text-[10px] sm:text-xs font-medium transition"
-            style={{ color: "#2d4470" }}
-            onClick={() => { }}
-          >
-            View all <ChevronRight size={12} />
-          </button>
+
+          <div className="flex-1 overflow-y-auto px-1 sm:px-2 py-1">
+            {refreshing ? (
+              [...Array(3)].map((_, i) => <SkeletonRow key={i} />)
+            ) : tickets.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full py-10 gap-2 sm:gap-3">
+                <div
+                  className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center"
+                  style={{ background: "#f0f3f8" }}
+                >
+                  <Ticket size={20} style={{ color: "#8c9bba" }} />
+                </div>
+                <p className="text-xs sm:text-sm font-medium" style={{ color: "#6b7fa3" }}>No tickets yet</p>
+              </div>
+            ) : (
+              tickets.slice(0, 5).map(t => (
+                <TicketRow key={t.id} id={t.id} title={t.title} status={t.status} date={t.created_at} />
+              ))
+            )}
+          </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-1 sm:px-2 py-1">
-          {refreshing ? (
-            [...Array(3)].map((_, i) => <SkeletonRow key={i} />)
-          ) : tickets.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full gap-2 sm:gap-3">
-              <div
-                className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center"
-                style={{ background: "#f0f3f8" }}
-              >
-                <Ticket size={20} style={{ color: "#8c9bba" }} />
-              </div>
-              <p className="text-xs sm:text-sm font-medium" style={{ color: "#6b7fa3" }}>No tickets yet</p>
-              <p className="text-[10px] sm:text-xs" style={{ color: "#8c9bba" }}>Create your first ticket to get started</p>
+        {/* LATEST ANNOUNCEMENTS */}
+        <div
+          className="lg:col-span-5 bg-white rounded-2xl overflow-hidden flex flex-col min-h-[300px]"
+          style={{ border: "1px solid #e8ecf2" }}
+        >
+          <div className="px-4 sm:px-5 py-3 sm:py-4 flex-shrink-0" style={{ borderBottom: "1px solid #f0f3f8", background: "#fbfcfd" }}>
+            <div className="flex items-center gap-2">
+              <Megaphone size={16} className="text-[#0e12ffff]" />
+              <h2 className="text-sm sm:text-base font-semibold" style={{ color: "#1a2744" }}>Latest Updates</h2>
             </div>
-          ) : (
-            tickets.slice(0, 5).map(t => (
-              <TicketRow key={t.id} id={t.id} title={t.title} status={t.status} date={t.created_at} />
-            ))
-          )}
+            <p className="text-[10px] sm:text-xs mt-0.5" style={{ color: "#8c9bba" }}>Official system announcements</p>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
+            {loadingAnnouncements ? (
+              [...Array(2)].map((_, i) => (
+                <div key={i} className="h-20 bg-gray-50 rounded-xl animate-pulse" />
+              ))
+            ) : !announcements || announcements.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full py-6 text-center opacity-40">
+                <Megaphone size={24} className="mb-2" />
+                <p className="text-xs font-medium">No updates yet</p>
+              </div>
+            ) : (
+              announcements.map((ann) => {
+                const status = ann.status || "Update";
+                const note = ann.content;
+                const isMine = tickets.some(t => String(t.id) === String(ann.ticket_id));
+
+                return (
+                  <div key={ann.id} className={`p-4 rounded-xl border transition-colors group relative overflow-hidden ${isMine ? 'bg-[#1a2744] border-[#1a2744] text-white shadow-lg' : 'bg-[#f8f9fc] border-[#eef1f6] hover:border-indigo-100'}`}>
+                    <div className="flex justify-between items-center mb-2 relative z-10">
+                      <div>
+                        {isMine && (
+                          <span className="text-[8px] font-black uppercase tracking-widest bg-emerald-400 text-[#1a2744] px-1.5 py-0.5 rounded-full">
+                            Your Ticket
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className={`text-[8px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-full border ${isMine
+                          ? 'bg-white/10 text-white border-white/20'
+                          : (status === "Resolved" ? "bg-[#f0fdf4] text-[#166534] border-[#bbf7d0]" :
+                            status === "On Hold" ? "bg-[#f3f4f6] text-[#000000] border-[#000000]" :
+                            status === "Open" ? "bg-[#fef2f2] text-[#7f1d1d] border-[#fecaca]" :
+                            status === "In Progress" || status === "Work in Progress" ? "bg-[#fefce8] text-[#854d0e] border-[#fef08a]" :
+                            status === "Closed" ? "bg-[#f9fafb] text-[#374151] border-[#d1d5db]" :
+                              "bg-[#f0f3f8] text-[#6b7fa3] border-[#dde3ef]")
+                          }`}>
+                          {status}
+                        </span>
+                        <span className={`text-[8px] font-bold uppercase tracking-tighter flex items-center gap-1 ${isMine ? 'text-indigo-200' : 'text-[#8c9bba]'}`}>
+                          <Clock size={8} />
+                          {new Date(ann.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      </div>
+                    </div>
+                    
+                    <div className="grid grid-cols-12 gap-3 relative z-10">
+                      <div className="col-span-5">
+                        <p className={`text-[9px] font-medium truncate ${isMine ? 'text-indigo-200' : 'text-[#6b7fa3]'}`}>
+                          Re: {ann.tickets?.title}
+                        </p>
+                      </div>
+                      <div className="col-span-7 border-l border-white/10 pl-3">
+                        <p className={`text-xs font-bold leading-relaxed ${isMine ? 'text-white' : 'text-[#1a2744]'}`}>
+                          "{note}"
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -829,7 +1068,7 @@ function RequestsPage({ tickets, refreshing }: { tickets: TicketType[]; refreshi
 
 
 
-function TicketsPage({ tickets, refreshing }: { tickets: TicketType[]; refreshing: boolean }) {
+function TicketsPage({ tickets, refreshing, setViewingTicket }: { tickets: TicketType[]; refreshing: boolean; setViewingTicket: (t: TicketType) => void }) {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
   const [dateFilter, setDateFilter] = useState("All Time");
@@ -955,18 +1194,21 @@ function TicketsPage({ tickets, refreshing }: { tickets: TicketType[]; refreshin
         ) : (
           <div className="flex-1 overflow-y-auto p-4 lg:p-6 flex flex-col gap-4">
             <div className="hidden lg:grid grid-cols-12 px-6 py-3 text-[10px] font-bold uppercase tracking-wider text-[#8c9bba] border-b border-[#f0f3f8]">
-              <div className="col-span-5">Ticket Info</div>
+              <div className="col-span-3">Ticket Info</div>
+              <div className="col-span-3">Description</div>
               <div className="col-span-2">Status</div>
               <div className="col-span-2 text-center">Request Type</div>
-              <div className="col-span-3 text-right">Date Created</div>
+              <div className="col-span-2 text-right">Date Created</div>
             </div>
             <div className="flex flex-col gap-3">
               {refreshing ? (
                 [...Array(4)].map((_, i) => <SkeletonCard key={i} />)
               ) : filteredTickets.map(t => (
-                <TicketCard key={t.id} ticket={t} />
+                <TicketCard key={t.id} ticket={t} onViewDescription={() => setViewingTicket(t)} />
               ))}
             </div>
+
+            {/* DESCRIPTION MODAL REMOVED FROM HERE */}
           </div>
         )}
       </div>
@@ -974,14 +1216,11 @@ function TicketsPage({ tickets, refreshing }: { tickets: TicketType[]; refreshin
   );
 }
 
-function TicketCard({ ticket }: { ticket: TicketType }) {
+function TicketCard({ ticket, onViewDescription }: { ticket: TicketType; onViewDescription?: () => void }) {
   return (
-    <Link
-      href={`/tickets/${ticket.id}`}
-      className="group block bg-white border border-[#e8ecf2] rounded-2xl p-4 lg:px-6 lg:py-4 hover:border-[#0e12ffff] hover:shadow-md transition-all duration-300 active:scale-[0.99]"
-    >
+    <div className="group block bg-white border border-[#e8ecf2] rounded-2xl p-4 lg:px-6 lg:py-4 hover:border-[#0e12ffff] hover:shadow-md transition-all duration-300">
       <div className="grid grid-cols-1 lg:grid-cols-12 items-center gap-4">
-        <div className="lg:col-span-5 flex flex-col gap-1">
+        <Link href={`/tickets/${ticket.id}`} className="lg:col-span-3 flex flex-col gap-1">
           <div className="flex items-center gap-2">
             <span className="text-[10px] font-bold text-[#8c9bba] bg-[#f8f9fc] px-2 py-0.5 rounded-md border border-[#e8ecf2]">
               ID- {ticket.id}
@@ -990,11 +1229,19 @@ function TicketCard({ ticket }: { ticket: TicketType }) {
               {ticket.title}
             </h3>
           </div>
-          {ticket.description && (
-            <p className="text-xs text-[#6b7fa3] line-clamp-1">
-              Description: {ticket.description}
-            </p>
-          )}
+        </Link>
+
+        <div className="lg:col-span-3 flex items-center">
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              onViewDescription?.();
+            }}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-xl text-[10px] font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-100 transition-all active:scale-95"
+          >
+            <Search size={12} />
+            View Full Description
+          </button>
         </div>
 
         <div className="lg:col-span-2 flex items-center -ml-3">
@@ -1010,7 +1257,7 @@ function TicketCard({ ticket }: { ticket: TicketType }) {
           </div>
         </div>
 
-        <div className="lg:col-span-3 flex items-center justify-end">
+        <div className="lg:col-span-2 flex items-center justify-end">
           <div className="flex flex-col items-end gap-1">
             <div className="flex items-center gap-2">
               <Calendar size={13} className="text-[#8c9bba]" />
@@ -1025,7 +1272,7 @@ function TicketCard({ ticket }: { ticket: TicketType }) {
           </div>
         </div>
       </div>
-    </Link>
+    </div>
   );
 }
 
@@ -1325,6 +1572,148 @@ function ProfileItem({ icon, label, value }: { icon: React.ReactNode; label: str
       <p className="text-sm font-semibold truncate bg-[#f8f9fc] px-4 py-3 rounded-2xl border border-[#eef1f6]" style={{ color: "#1a2744" }}>
         {value || "Not Set"}
       </p>
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────── */
+/*  ANNOUNCEMENTS VIEW                          */
+/* ──────────────────────────────────────────── */
+function AnnouncementsView({ user, tickets }: { user: UserType | null, tickets: TicketType[] }) {
+  const [announcements, setAnnouncements] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const myTicketIds = new Set(tickets.map(t => t.id));
+
+  useEffect(() => {
+    fetchAnnouncements();
+
+    const channelName = `announcements-changes-${Date.now()}`;
+    const channel = supabase
+      .channel(channelName)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'announcements' }, () => {
+        fetchAnnouncements();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [tickets]);
+
+  const fetchAnnouncements = async () => {
+    try {
+      setLoading(true);
+      const ticketIds = tickets.map(t => String(t.id)).filter(Boolean);
+
+      if (ticketIds.length === 0) {
+        setAnnouncements([]);
+        setLoading(false);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("announcements")
+        .select(`
+          id,
+          ticket_id,
+          content,
+          status,
+          created_at,
+          tickets (title, id)
+        `)
+        .in("ticket_id", ticketIds)
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+      setAnnouncements(data as any);
+    } catch (err: any) {
+      console.error("Error fetching announcements full debug:", err);
+      console.error("Error fetching announcements message:", err?.message || JSON.stringify(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="animate-fade-in-up flex flex-col gap-6 h-full pb-8">
+      <div className="flex-shrink-0">
+        <h1 className="text-lg sm:text-xl lg:text-2xl font-bold" style={{ color: "#1a2744" }}>Notices</h1>
+        <p className="text-xs sm:text-sm mt-1" style={{ color: "#8c9bba" }}>Stay informed with the latest official system updates.</p>
+      </div>
+
+      <div className="flex-1 overflow-y-auto pr-1">
+        {loading ? (
+          <div className="flex flex-col gap-4">
+            {[...Array(3)].map((_, i) => (
+              <div key={i} className="h-32 bg-white rounded-2xl animate-pulse border border-[#e8ecf2]" />
+            ))}
+          </div>
+        ) : announcements.length === 0 ? (
+          <div className="bg-white rounded-[2.5rem] p-12 text-center border border-dashed border-[#e8ecf2] flex flex-col items-center">
+            <div className="w-16 h-16 bg-[#f8f9fc] rounded-2xl flex items-center justify-center mb-4">
+              <Megaphone size={32} className="text-[#8c9bba] opacity-30" />
+            </div>
+            <h4 className="text-base font-bold text-[#1a2744] ">No announcements yet</h4>
+            <p className="text-xs text-[#8c9bba] mt-1 max-w-xs">All official ICT updates will be listed here.</p>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-4">
+            {announcements.map((ann) => {
+              const status = ann.status || "Update";
+              const note = ann.content;
+              const isMine = myTicketIds.has(ann.ticket_id);
+
+              return (
+                <div key={ann.id} className="bg-white p-5 rounded-2xl border border-[#e8ecf2] shadow-sm hover:shadow-md transition-all relative overflow-hidden group">
+                  <div className="flex justify-between items-center mb-3">
+                    <div className="flex items-center gap-2">
+                      {isMine && (
+                        <span className="px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest bg-[#1a2744] text-white border border-[#1a2744]">
+                          Your Ticket
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className={`px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest border ${
+                        status === "Resolved" ? "bg-[#f0fdf4] text-[#166534] border-[#bbf7d0]" :
+                        status === "On Hold" ? "bg-[#f3f4f6] text-[#000000] border-[#000000]" :
+                        status === "Open" ? "bg-[#fef2f2] text-[#7f1d1d] border-[#fecaca]" :
+                        status === "In Progress" || status === "Work in Progress" ? "bg-[#fefce8] text-[#854d0e] border-[#fef08a]" :
+                        status === "Closed" ? "bg-[#f9fafb] text-[#374151] border-[#d1d5db]" :
+                        "bg-[#f0f3f8] text-[#6b7fa3] border-[#dde3ef]"
+                        }`}>
+                        {status}
+                      </div>
+                      <span className="text-[10px] font-bold text-[#8c9bba] flex items-center gap-1 uppercase tracking-tighter">
+                        <Clock size={11} />
+                        {new Date(ann.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+                    <div className="md:col-span-4 flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-500 flex items-center justify-center shrink-0 border border-indigo-100">
+                        <Shield size={18} />
+                      </div>
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-[10px] font-black uppercase tracking-widest text-[#8c9bba]">Case Info</span>
+                        <p className="text-xs font-bold text-[#1a2744] truncate">{ann.tickets?.title}</p>
+                      </div>
+                    </div>
+                    <div className="md:col-span-8 md:border-l md:border-[#f0f3f8] md:pl-4 overflow-hidden">
+                      <span className="text-[10px] font-black uppercase tracking-widest text-[#8c9bba] mb-1 block">Description</span>
+                      <p className="text-sm font-bold text-[#1a2744] leading-relaxed break-words">
+                        "{note}"
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

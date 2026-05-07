@@ -100,6 +100,7 @@ export default function AdminTicketDetailPage({ params }: { params: Promise<{ id
   const [tempAssignee, setTempAssignee] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [showScrollButton, setShowScrollButton] = useState(false);
+  const [statusNote, setStatusNote] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom on new messages
@@ -266,7 +267,7 @@ export default function AdminTicketDetailPage({ params }: { params: Promise<{ id
           const derivedName = rep.email?.split("@")[0] || "User";
           const { data: updated } = await supabase
             .from("profiles")
-            .update({ full_name: derivedName, updated_at: new Date().toISOString() })
+            .update({ full_name: derivedName })
             .eq("id", rep.id)
             .select()
             .single();
@@ -288,7 +289,7 @@ export default function AdminTicketDetailPage({ params }: { params: Promise<{ id
           const derivedName = asg.email?.split("@")[0] || "User";
           const { data: updated } = await supabase
             .from("profiles")
-            .update({ full_name: derivedName, updated_at: new Date().toISOString() })
+            .update({ full_name: derivedName })
             .eq("id", asg.id)
             .select()
             .single();
@@ -388,6 +389,7 @@ export default function AdminTicketDetailPage({ params }: { params: Promise<{ id
 
   const handleSaveChanges = async () => {
     if (!ticket) return;
+
     try {
       setIsSaving(true);
       let { error, data } = await supabase
@@ -441,6 +443,26 @@ export default function AdminTicketDetailPage({ params }: { params: Promise<{ id
         const newAssigneeProfile = staff.find(s => s.id === tempAssignee);
         setAssignee(newAssigneeProfile || null);
 
+        // Insert the status note into the dedicated announcements table
+        if (statusNote.trim()) {
+          await supabase.from("announcements").insert([
+            {
+              ticket_id: ticketId,
+              status: tempStatus,
+              content: statusNote.trim(),
+            },
+          ]);
+          
+          // Mark unread for user so they see the notification
+          await supabase
+            .from("tickets")
+            .update({ unread_admin_reply: true })
+            .eq("id", ticketId);
+
+          await fetchComments();
+          setStatusNote("");
+        }
+
         // Feedback
         console.log("Changes saved successfully.");
       }
@@ -469,11 +491,11 @@ export default function AdminTicketDetailPage({ params }: { params: Promise<{ id
 
   const getStatusStyle = (status: string) => {
     const map: Record<string, { bg: string; text: string; icon: any }> = {
-      Open: { bg: "bg-red-50", text: "text-red-600", icon: <AlertCircle size={14} /> },
-      "In Progress": { bg: "bg-blue-50", text: "text-blue-600", icon: <Clock size={14} /> },
-      "On Hold": { bg: "bg-gray-100", text: "text-gray-600", icon: <PauseCircle size={14} /> },
-      Resolved: { bg: "bg-emerald-50", text: "text-emerald-600", icon: <CheckCircle2 size={14} /> },
-      Closed: { bg: "bg-[#1a2744]", text: "text-white", icon: <CircleDot size={14} /> },
+      Open: { bg: "bg-[#fef2f2]", text: "text-[#7f1d1d]", icon: <AlertCircle size={14} /> },
+      "In Progress": { bg: "bg-[#fefce8]", text: "text-[#854d0e]", icon: <Clock size={14} /> },
+      "On Hold": { bg: "bg-[#f3f4f6]", text: "text-[#000000]", icon: <PauseCircle size={14} /> },
+      Resolved: { bg: "bg-[#f0fdf4]", text: "text-[#166534]", icon: <CheckCircle2 size={14} /> },
+      Closed: { bg: "bg-[#f9fafb]", text: "text-[#374151]", icon: <CircleDot size={14} /> },
     };
     return map[status] || { bg: "bg-gray-100", text: "text-gray-600", icon: <CircleDot size={14} /> };
   };
@@ -585,7 +607,7 @@ export default function AdminTicketDetailPage({ params }: { params: Promise<{ id
                 <Tag size={18} className="text-[#0e12ffff]" />
                 Issue Description
               </h2>
-              <div className="p-6 rounded-3xl bg-[#f8f9fc] border border-[#e8ecf2] text-[#1a2744] leading-relaxed whitespace-pre-wrap text-sm sm:text-base">
+              <div className="p-6 rounded-3xl bg-[#f8f9fc] border border-[#e8ecf2] text-[#1a2744] leading-relaxed whitespace-pre-wrap text-sm sm:text-base break-words overflow-hidden">
                 {ticket.description}
               </div>
             </div>
@@ -619,15 +641,17 @@ export default function AdminTicketDetailPage({ params }: { params: Promise<{ id
                   </div>
                 ) : (
                   <div className="flex flex-col gap-8">
-                    {comments.map((comment, index) => {
-                      const isCurrentAuthor = comment.user_id === user?.id;
-                      const isStaff = comment.profiles?.role === "admin";
+                    {comments
+                      .filter(c => !c.content.startsWith("[System Update"))
+                      .map((comment, index) => {
+                        const isCurrentAuthor = comment.user_id === user?.id;
+                        const isStaff = comment.profiles?.role === "admin";
 
                       return (
                         <div
                           key={comment.id}
-                          className={`flex flex-col gap-2 animate-fade-in-up ${isCurrentAuthor ? "items-end" : "items-start"}`}
-                          style={{ animationDelay: `${index * 30}ms` }}
+                          className={`flex flex-col gap-2 animate-fade-in-up`}
+                          style={{ animationDelay: `${index * 50}ms` }}
                         >
                           <div className={`flex items-start gap-3 ${isCurrentAuthor ? "flex-row-reverse" : "flex-row"}`}>
                             <div
@@ -738,6 +762,22 @@ export default function AdminTicketDetailPage({ params }: { params: Promise<{ id
                 <ChevronDown size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-[#8c9bba] pointer-events-none" />
               </div>
             </div>
+
+            {/* Inline Status Note Box */}
+            {(tempStatus === "On Hold" || tempStatus === "Resolved") && (
+              <div className="flex flex-col gap-2 animate-fade-in-up">
+                <label className="text-[10px] font-black uppercase tracking-widest text-indigo-600 flex items-center gap-1.5">
+                  <MessageSquare size={10} />
+                  {tempStatus} Note
+                </label>
+                <textarea
+                  value={statusNote}
+                  onChange={(e) => setStatusNote(e.target.value)}
+                  placeholder={`Type your ${tempStatus} note here...`}
+                  className="w-full p-4 rounded-2xl bg-indigo-50/50 border border-indigo-100 outline-none focus:bg-white focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50 transition-all text-xs font-medium min-h-[100px] resize-none"
+                />
+              </div>
+            )}
 
             {/* Priority Dropdown */}
             <div className="flex flex-col gap-2">

@@ -25,7 +25,9 @@ import {
   User as UserIcon,
   UserPlus,
   Trash2,
-  CheckSquare
+  CheckSquare,
+  Megaphone,
+  Loader2
 } from "lucide-react";
 
 /* ---------------- TYPES ---------------- */
@@ -76,6 +78,11 @@ export default function AllTicketsAdmin() {
   const [refreshing, setRefreshing] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
+
+  // Delete Modal States
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [ticketToDelete, setTicketToDelete] = useState<string | number | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Filters
   const [search, setSearch] = useState("");
@@ -164,7 +171,7 @@ export default function AllTicketsAdmin() {
 
             const { data: updated } = await supabase
               .from("profiles")
-              .update({ full_name: derivedName, updated_at: new Date().toISOString() })
+              .update({ full_name: derivedName })
               .eq("id", p.id)
               .select()
               .single();
@@ -283,6 +290,24 @@ export default function AllTicketsAdmin() {
     }
   };
 
+  const bulkReopen = async () => {
+    if (selectedTickets.size === 0) return;
+    try {
+      setRefreshing(true);
+      const { error } = await supabase
+        .from("tickets")
+        .update({ status: "Open" })
+        .in("id", Array.from(selectedTickets));
+
+      if (!error) {
+        await fetchTickets();
+        setSelectedTickets(new Set());
+      }
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   const handleAssignTicket = async (ticketId: string | number, staffId: string) => {
     try {
       setRefreshing(true);
@@ -341,6 +366,47 @@ export default function AllTicketsAdmin() {
       }
     } finally {
       setRefreshing(false);
+    }
+  };
+
+  const handleUpdateMode = async (ticketId: string | number, newMode: string) => {
+    try {
+      setRefreshing(true);
+      const { error } = await supabase
+        .from("tickets")
+        .update({ mode: newMode })
+        .eq("id", ticketId);
+
+      if (error && error.code === 'PGRST204' && error.message.includes('mode')) {
+        alert("Warning: The 'mode' column is missing from your database. You cannot update the Request Mode until the column is added to the 'tickets' table.");
+      } else if (error) {
+        console.error("Update mode error:", error);
+      } else {
+        await fetchTickets();
+      }
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const handleDeleteTicket = async () => {
+    if (!ticketToDelete) return;
+    try {
+      setIsDeleting(true);
+      const { error } = await supabase
+        .from("tickets")
+        .delete()
+        .eq("id", ticketToDelete);
+
+      if (error) {
+        alert(`Error deleting ticket: ${error.message}`);
+      } else {
+        await fetchTickets();
+        setShowDeleteModal(false);
+        setTicketToDelete(null);
+      }
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -479,6 +545,7 @@ export default function AllTicketsAdmin() {
                   <th className="px-4 py-5 text-[11px] font-black uppercase tracking-widest text-[#8c9bba]">Ticket ID</th>
                   <th className="px-4 py-5 text-[11px] font-black uppercase tracking-widest text-[#8c9bba]">Subject & Detail</th>
                   <th className="px-4 py-5 text-[11px] font-black uppercase tracking-widest text-[#8c9bba]">Status</th>
+                  <th className="px-4 py-5 text-[11px] font-black uppercase tracking-widest text-[#8c9bba]">Request Mode</th>
                   <th className="px-4 py-5 text-[11px] font-black uppercase tracking-widest text-[#8c9bba]">Category</th>
                   <th className="px-4 py-5 text-[11px] font-black uppercase tracking-widest text-[#8c9bba]">Priority</th>
                   <th className="px-4 py-5 text-[11px] font-black uppercase tracking-widest text-[#8c9bba]">Reporter</th>
@@ -488,10 +555,10 @@ export default function AllTicketsAdmin() {
               </thead>
               <tbody className="divide-y divide-[#f0f3f8]">
                 {loading ? (
-                  <tr><td colSpan={8} className="p-20 text-center font-bold text-[#8c9bba] animate-pulse">Synchronizing records...</td></tr>
+                  <tr><td colSpan={9} className="p-20 text-center font-bold text-[#8c9bba] animate-pulse">Synchronizing records...</td></tr>
                 ) : filteredTickets.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="p-32 text-center">
+                    <td colSpan={9} className="p-32 text-center">
                       <div className="flex flex-col items-center justify-center gap-4 animate-fade-in-up">
                         <div className="w-20 h-20 rounded-[2rem] bg-[#f8f9fc] flex items-center justify-center text-[#8c9bba]">
                           <Search size={40} strokeWidth={1.5} opacity={0.3} />
@@ -536,6 +603,11 @@ export default function AllTicketsAdmin() {
                         <div className={`px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider inline-flex items-center gap-1.5 border ${getStatusStyle(t.status)}`}>
                           {getStatusIcon(t.status)}
                           {t.status}
+                        </div>
+                      </td>
+                      <td className="px-4 py-5">
+                        <div className="px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider inline-flex items-center gap-1.5 border bg-indigo-50 text-indigo-600 border-indigo-100 shadow-sm">
+                          {t.mode || "Portal"}
                         </div>
                       </td>
                       <td className="px-4 py-5">
@@ -607,12 +679,33 @@ export default function AllTicketsAdmin() {
                         </div>
 
                         <button
+                          onClick={() => {
+                            setTicketToDelete(t.id);
+                            setShowDeleteModal(true);
+                          }}
+                          className="p-2 rounded-xl bg-red-50 text-red-500 hover:bg-red-500 hover:text-white transition-all active:scale-90"
+                          title="Delete Ticket"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+
+                        <button
                           onClick={() => handleUpdateStatus(t.id, t.status === "Resolved" ? "Open" : "Resolved")}
                           className={`p-2 rounded-xl transition-all ${t.status === "Resolved" ? "bg-emerald-50 text-emerald-600 border border-emerald-100" : "bg-gray-100 text-gray-400 hover:text-emerald-500 hover:bg-emerald-50"}`}
                           title={t.status === "Resolved" ? "Undo Resolve" : "Mark as Resolved"}
                         >
                           <CheckSquare size={16} />
                         </button>
+
+                        {t.status === "Closed" && (
+                          <button
+                            onClick={() => handleUpdateStatus(t.id, "Open")}
+                            className="p-2 rounded-xl bg-orange-50 text-orange-500 hover:bg-orange-500 hover:text-white transition-all active:scale-90 border border-orange-100"
+                            title="Reopen Ticket"
+                          >
+                            <RefreshCcw size={16} />
+                          </button>
+                        )}
 
                         <button
                           onClick={() => router.push(`/admin/tickets/${t.id}`)}
@@ -659,7 +752,6 @@ export default function AllTicketsAdmin() {
                     ))}
                   </div>
                 </div>
-
                 <button
                   onClick={bulkClose}
                   className="flex items-center gap-2 px-6 py-2 rounded-xl bg-indigo-500 hover:bg-indigo-400 text-xs font-bold transition-all"
@@ -669,10 +761,49 @@ export default function AllTicketsAdmin() {
                 </button>
 
                 <button
+                  onClick={bulkReopen}
+                  className="flex items-center gap-2 px-6 py-2 rounded-xl bg-orange-500 hover:bg-orange-400 text-xs font-bold transition-all"
+                >
+                  <RefreshCcw size={16} />
+                  Reopen Selected
+                </button>
+
+                <button
                   onClick={() => setSelectedTickets(new Set())}
                   className="p-2 text-white/60 hover:text-white transition-colors"
                 >
                   <X size={20} />
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* DELETE CONFIRMATION MODAL */}
+        {showDeleteModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-[#1a2744]/40 backdrop-blur-sm animate-fade-in">
+            <div className="bg-white p-8 rounded-[2.5rem] shadow-2xl max-w-sm w-full animate-fade-in-up border border-red-100">
+              <div className="w-16 h-16 rounded-full bg-red-50 text-red-500 flex items-center justify-center mb-6 mx-auto">
+                <Trash2 size={32} />
+              </div>
+              <h3 className="text-2xl font-bold text-center text-[#1a2744] mb-2">Delete Ticket?</h3>
+              <p className="text-sm text-[#8c9bba] text-center font-medium mb-8 leading-relaxed">
+                Are you sure you want to delete <span className="font-bold text-[#1a2744]">Ticket ID-{ticketToDelete}</span>? This action cannot be undone.
+              </p>
+              <div className="flex items-center gap-3">
+                <button
+                  disabled={isDeleting}
+                  onClick={() => setShowDeleteModal(false)}
+                  className="flex-1 py-4 rounded-2xl bg-[#f0f3f8] text-[#1a2744] font-bold text-sm hover:bg-[#e8ecf2] transition-all active:scale-95 disabled:opacity-50"
+                >
+                  No, Cancel
+                </button>
+                <button
+                  disabled={isDeleting}
+                  onClick={handleDeleteTicket}
+                  className="flex-1 py-4 rounded-2xl bg-red-500 text-white font-bold text-sm hover:bg-red-600 transition-all shadow-lg shadow-red-500/30 active:scale-95 flex items-center justify-center gap-2 disabled:opacity-70"
+                >
+                  {isDeleting ? <Loader2 size={18} className="animate-spin" /> : "Yes, Delete"}
                 </button>
               </div>
             </div>
@@ -768,12 +899,12 @@ function getStatusIcon(status: string) {
 
 function getStatusStyle(status: string) {
   switch (status) {
-    case "Open": return "bg-red-50 text-red-600 border-red-100";
+    case "Open": return "bg-[#fef2f2] text-[#7f1d1d] border-[#fecaca]";
     case "Work in Progress":
-    case "In Progress": return "bg-blue-50 text-blue-600 border-blue-100";
-    case "Resolved": return "bg-emerald-50 text-emerald-600 border-emerald-100";
-    case "On Hold": return "bg-gray-50 text-[#8c9bba] border-gray-100";
-    case "Closed": return "bg-[#1a2744] text-white border-white/20";
+    case "In Progress": return "bg-[#fefce8] text-[#854d0e] border-[#fef08a]";
+    case "Resolved": return "bg-[#f0fdf4] text-[#166534] border-[#bbf7d0]";
+    case "On Hold": return "bg-[#f3f4f6] text-[#000000] border-[#000000]";
+    case "Closed": return "bg-[#f9fafb] text-[#374151] border-[#d1d5db]";
     default: return "bg-gray-50 text-[#1a2744] border-gray-100";
   }
 }

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Ticket, Send, ArrowLeft, Loader2, CheckCircle2, Clock, CircleDot, ChevronDown, AlertTriangle } from "lucide-react";
+import { Ticket, Send, ArrowLeft, Loader2, CheckCircle2, Clock, CircleDot, ChevronDown, AlertTriangle, Megaphone } from "lucide-react";
 
 type TicketType = {
     id: string | number;
@@ -118,8 +118,7 @@ export default function TicketsFormPage() {
                     .upsert({
                         id: userData.user.id,
                         // email is usually handled by auth and shouldn't be updated here if it exists
-                        full_name: userData.user.user_metadata?.full_name || userData.user.email?.split("@")[0] || "User",
-                        updated_at: new Date().toISOString()
+                        full_name: userData.user.user_metadata?.full_name || userData.user.email?.split("@")[0] || "User"
                     }, { onConflict: 'id' });
 
                 if (profileError) {
@@ -156,34 +155,45 @@ export default function TicketsFormPage() {
             }
 
             // Assemble payload
-            const newTicket = {
+            const newTicket: any = {
                 title,
                 description,
                 status,
                 category,
+                mode: "Self-Service Portal",
                 user_id: userId,
                 assigned_to: assignedTo,
+                request_type: "Incident"
             };
 
             const { error: insertError } = await supabase.from("tickets").insert([newTicket]);
 
             if (insertError) {
                 console.error("Supabase Insertion Error:", insertError);
-                setErrorMsg(insertError.message);
-                setRoutingMsg("");
+                
+                // Fallback for missing columns
+                if (insertError.message.includes("mode") || insertError.message.includes("request_type")) {
+                    console.warn("Retrying without optional columns...");
+                    const fallbackTicket = {
+                        title,
+                        description,
+                        status,
+                        category,
+                        user_id: userId,
+                        assigned_to: assignedTo
+                    };
+                    const { error: retryError } = await supabase.from("tickets").insert([fallbackTicket]);
+                    if (retryError) {
+                        setErrorMsg(retryError.message);
+                    } else {
+                        handleSuccess();
+                    }
+                } else {
+                    setErrorMsg(insertError.message);
+                }
                 window.scrollTo({ top: 0, behavior: "smooth" });
             } else {
-                setSuccessMsg("Ticket submitted successfully!");
-                setRoutingMsg("");
-                window.scrollTo({ top: 0, behavior: "smooth" });
-
-                // Clear form
-                setTitle("");
-                setDescription("");
-                setCategory("");
-
-                await fetchUserTickets(userId);
-                setTimeout(() => setSuccessMsg(""), 5000);
+                handleSuccess();
             }
         } catch (err: any) {
             setErrorMsg(err?.message || "An unexpected error occurred.");
@@ -191,6 +201,20 @@ export default function TicketsFormPage() {
         } finally {
             setSubmitting(false);
         }
+    };
+
+    const handleSuccess = async () => {
+        setSuccessMsg("Ticket submitted successfully!");
+        setRoutingMsg("");
+        window.scrollTo({ top: 0, behavior: "smooth" });
+
+        // Clear form
+        setTitle("");
+        setDescription("");
+        setCategory("");
+
+        if (userId) await fetchUserTickets(userId);
+        setTimeout(() => setSuccessMsg(""), 5000);
     };
 
     const getStatusIcon = (status: string) => {
@@ -264,17 +288,27 @@ export default function TicketsFormPage() {
                 </div>
                 <div className="flex items-center gap-3 sm:gap-4">
                     {user && (
-                        <div className="flex items-center gap-2 pr-2 sm:pr-4 border-r border-[#e8ecf2] mr-2">
-                            <div className="w-8 h-8 rounded-full bg-[#1a2744] text-white flex items-center justify-center text-[10px] font-bold">
-                                {(user.full_name || "U").charAt(0).toUpperCase()}
-                            </div>
-                            <div className="flex flex-col hidden sm:flex">
-                                <span className="text-[10px] font-bold text-[#1a2744] leading-tight">
-                                    {user.full_name}
-                                </span>
-                                <span className="text-[9px] text-[#8c9bba] leading-tight">
-                                    {user.email}
-                                </span>
+                        <div className="flex items-center gap-4">
+                            <Link
+                                href="/announcements"
+                                className="flex items-center gap-2 px-3 py-2 rounded-xl bg-indigo-50 text-[#1a2744] hover:bg-indigo-100 transition-all text-[10px] font-black uppercase tracking-widest shadow-sm"
+                            >
+                                <Megaphone size={14} className="text-[#0e12ffff]" />
+                                <span className="hidden sm:inline">Official Updates</span>
+                                <span className="sm:hidden">Updates</span>
+                            </Link>
+                            <div className="flex items-center gap-2 pr-2 sm:pr-4 border-r border-[#e8ecf2] mr-2">
+                                <div className="w-8 h-8 rounded-full bg-[#1a2744] text-white flex items-center justify-center text-[10px] font-bold">
+                                    {(user.full_name || "U").charAt(0).toUpperCase()}
+                                </div>
+                                <div className="flex flex-col hidden sm:flex">
+                                    <span className="text-[10px] font-bold text-[#1a2744] leading-tight">
+                                        {user.full_name}
+                                    </span>
+                                    <span className="text-[9px] text-[#8c9bba] leading-tight">
+                                        {user.email}
+                                    </span>
+                                </div>
                             </div>
                         </div>
                     )}

@@ -22,7 +22,8 @@ import {
   Shield,
   Activity,
   Menu,
-  X
+  X,
+  Megaphone
 } from "lucide-react";
 import {
   PieChart,
@@ -35,7 +36,18 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
+  Sector,
 } from "recharts";
+
+const MODE_COLORS: Record<string, string> = {
+  "E-Mail": "#4285F4",
+  "Self Service Portal": "#7CB342",
+  "Assigned by ICT Head": "#8E24AA",
+  "Request Letter": "#E53935",
+  "Walk-in": "#1E88E5",
+  "Phone Call/Text": "#D81B60",
+  "Portal": "#7CB342",
+};
 
 /* ---------------- TYPES ---------------- */
 
@@ -81,6 +93,7 @@ export default function AdminDashboard() {
   const [search, setSearch] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
 
   const [now, setNow] = useState<Date | null>(null);
 
@@ -156,7 +169,7 @@ export default function AdminDashboard() {
 
             const { data: updated } = await supabase
               .from("profiles")
-              .update({ full_name: derivedName, updated_at: new Date().toISOString() })
+              .update({ full_name: derivedName })
               .eq("id", p.id)
               .select()
               .single();
@@ -415,39 +428,58 @@ export default function AdminDashboard() {
             {/* PIE: OPEN BY MODE */}
             <ChartCard title="Open Requests by Mode">
               {modeData.length > 0 ? (
-                <>
-                  <ResponsiveContainer width="100%" height={200}>
+                <div className="relative">
+                  <ResponsiveContainer width="100%" height={240}>
                     <PieChart>
+                      <defs>
+                        {modeData.map((_, i) => (
+                          <linearGradient key={`grad-${i}`} id={`pieGrad-${i}`} x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor={MODE_COLORS[modeData[i].name] || "#8c9bba"} stopOpacity={1} />
+                            <stop offset="100%" stopColor={MODE_COLORS[modeData[i].name] || "#8c9bba"} stopOpacity={0.6} />
+                          </linearGradient>
+                        ))}
+                      </defs>
                       <Pie
-                        data={modeData}
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={60}
-                        outerRadius={80}
-                        paddingAngle={5}
-                        dataKey="value"
-                        onClick={(data) => {
-                          if (data && data.name) {
-                            setSearch(data.name);
-                          }
-                        }}
+                        {...({
+                          activeIndex,
+                          activeShape: renderActiveShape,
+                          data: modeData,
+                          cx: "50%",
+                          cy: "50%",
+                          innerRadius: 60,
+                          outerRadius: 80,
+                          paddingAngle: 5,
+                          dataKey: "value",
+                          onMouseEnter: (_: any, index: number) => setActiveIndex(index),
+                          onClick: (data: any) => data && data.name && setSearch(data.name)
+                        } as any)}
                       >
                         {modeData.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} className="cursor-pointer outline-none" />
+                          <Cell 
+                            key={`cell-${index}`} 
+                            fill={`url(#pieGrad-${index})`} 
+                            stroke="white" 
+                            strokeWidth={2}
+                            className="cursor-pointer outline-none" 
+                          />
                         ))}
                       </Pie>
-                      <Tooltip />
+                      <Tooltip content={<CustomTooltip />} />
                     </PieChart>
                   </ResponsiveContainer>
-                  <div className="flex flex-wrap gap-x-4 gap-y-2 mt-4 px-2">
+                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center pointer-events-none">
+                    <span className="text-2xl font-black text-[#1a2744] leading-none">{tickets.length}</span>
+                    <span className="text-[8px] font-bold text-[#8c9bba] uppercase tracking-tighter">Total</span>
+                  </div>
+                  <div className="flex flex-wrap justify-center gap-x-4 gap-y-2 mt-4 px-2">
                     {modeData.map((d, i) => (
-                      <div key={i} className="flex items-center gap-1.5 min-w-[80px]">
-                        <div className="w-2 h-2 rounded-full" style={{ background: COLORS[i % COLORS.length] }} />
-                        <span className="text-[10px] font-bold text-[#8c9bba] truncate max-w-[80px]">{d.name}</span>
+                      <div key={i} className="flex items-center gap-1.5">
+                        <div className="w-2.5 h-2.5 rounded-full" style={{ background: MODE_COLORS[d.name] || '#8c9bba' }} />
+                        <span className="text-[10px] font-bold text-[#6b7fa3]">{d.name}</span>
                       </div>
                     ))}
                   </div>
-                </>
+                </div>
               ) : (
                 <div className="flex flex-col items-center justify-center h-[200px] text-[#8c9bba]">
                   <Activity size={32} className="mb-2 opacity-20" />
@@ -461,10 +493,28 @@ export default function AdminDashboard() {
               {slaStats.violated > 0 || slaStats.approaching > 0 ? (
                 <ResponsiveContainer width="100%" height={240}>
                   <BarChart layout="vertical" data={[{ name: "Violated", val: slaStats.violated }, { name: "Approaching", val: slaStats.approaching }]}>
+                    <defs>
+                      <linearGradient id="barGradViolated" x1="0" y1="0" x2="1" y2="0">
+                        <stop offset="0%" stopColor="#ff4d6d" />
+                        <stop offset="100%" stopColor="#ff8a9a" />
+                      </linearGradient>
+                      <linearGradient id="barGradApproaching" x1="0" y1="0" x2="1" y2="0">
+                        <stop offset="0%" stopColor="#ffb703" />
+                        <stop offset="100%" stopColor="#ffd95a" />
+                      </linearGradient>
+                    </defs>
                     <XAxis type="number" hide />
-                    <YAxis dataKey="name" type="category" tick={{ fontSize: 10, fontWeight: 'bold' }} />
-                    <Tooltip />
-                    <Bar dataKey="val" fill="#ff8a9a" radius={[0, 4, 4, 0]} barSize={40} />
+                    <YAxis dataKey="name" type="category" tick={{ fontSize: 10, fontWeight: 'bold' }} axisLine={false} tickLine={false} />
+                    <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(240, 243, 248, 0.5)' }} />
+                    <Bar 
+                      dataKey="val" 
+                      radius={[0, 8, 8, 0]} 
+                      barSize={40}
+                    >
+                      {[{ name: "Violated", val: slaStats.violated }, { name: "Approaching", val: slaStats.approaching }].map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={entry.name === "Violated" ? "url(#barGradViolated)" : "url(#barGradApproaching)"} />
+                      ))}
+                    </Bar>
                   </BarChart>
                 </ResponsiveContainer>
               ) : (
@@ -481,37 +531,45 @@ export default function AdminDashboard() {
                 <>
                   <ResponsiveContainer width="100%" height={200}>
                     <BarChart data={categoryData}>
+                      <defs>
+                        <linearGradient id="catGradApproaching" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#ffd95a" />
+                          <stop offset="100%" stopColor="#ffb703" />
+                        </linearGradient>
+                        <linearGradient id="catGradViolated" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#dc2626" />
+                          <stop offset="100%" stopColor="#991b1b" />
+                        </linearGradient>
+                      </defs>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f3f8" />
-                      <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10 }} />
+                      <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 'bold' }} />
                       <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10 }} />
-                      <Tooltip cursor={{ fill: 'transparent' }} />
+                      <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(240, 243, 248, 0.4)' }} />
                       <Bar
                         dataKey="approaching"
-                        fill="#ffd95a"
-                        radius={[4, 4, 0, 0]}
-                        onClick={(data) => {
-                          if (data && data.name) {
-                            setSearch(data.name);
-                          }
-                        }}
+                        fill="url(#catGradApproaching)"
+                        radius={[6, 6, 0, 0]}
+                        onClick={(data) => data && data.name && setSearch(data.name)}
                         className="cursor-pointer transition-opacity hover:opacity-80"
                       />
                       <Bar
                         dataKey="violated"
-                        fill="#dc2626"
-                        radius={[4, 4, 0, 0]}
-                        onClick={(data) => {
-                          if (data && data.name) {
-                            setSearch(data.name);
-                          }
-                        }}
+                        fill="url(#catGradViolated)"
+                        radius={[6, 6, 0, 0]}
+                        onClick={(data) => data && data.name && setSearch(data.name)}
                         className="cursor-pointer transition-opacity hover:opacity-80"
                       />
                     </BarChart>
                   </ResponsiveContainer>
-                  <div className="flex justify-center gap-4 mt-4">
-                    <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-sm bg-[#ffd95a]" /><span className="text-[10px] font-bold text-[#8c9bba]">Approaching</span></div>
-                    <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-sm bg-[#dc2626]" /><span className="text-[10px] font-bold text-[#8c9bba]">Violated</span></div>
+                  <div className="flex justify-center gap-6 mt-4">
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-sm bg-[#ffd95a]" />
+                      <span className="text-[10px] font-black uppercase tracking-widest text-[#8c9bba]">Approaching</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-sm bg-[#dc2626]" />
+                      <span className="text-[10px] font-black uppercase tracking-widest text-[#8c9bba]">Violated</span>
+                    </div>
                   </div>
                 </>
               ) : (
@@ -628,14 +686,14 @@ export default function AdminDashboard() {
                           </div>
                         </td>
                         <td>
-                          <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wide border bg-emerald-50 text-emerald-600 border-emerald-100">
-                            {t.category || "General"}
-                          </div>
-                        </td>
-                        <td>
                           <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wide border ${getStatusStyle(t.status)}`}>
                             {getStatusIcon(t.status)}
                             {t.status}
+                          </div>
+                        </td>
+                        <td>
+                          <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wide border bg-emerald-50 text-emerald-600 border-emerald-100">
+                            {t.category || "General"}
                           </div>
                         </td>
                         <td>
@@ -755,7 +813,7 @@ interface ChartCardProps {
 
 function ChartCard({ title, children }: ChartCardProps) {
   return (
-    <div className="bg-white p-6 rounded-[2.5rem] border border-[#e8ecf2] shadow-[0_10px_40px_-10px_rgba(26,39,68,0.05)] flex flex-col">
+    <div className="bg-white p-6 rounded-[2.5rem] border border-[#e8ecf2] shadow-[0_10px_40px_-10px_rgba(26,39,68,0.05)] flex flex-col hover:shadow-xl transition-all duration-300">
       <h4 className="text-xs font-black text-[#1a2744] uppercase tracking-wider mb-6 pb-4 border-b border-[#f8f9fc] flex items-center justify-between">
         {title}
         <MoreVertical size={14} className="text-[#8c9bba]" />
@@ -767,6 +825,46 @@ function ChartCard({ title, children }: ChartCardProps) {
   );
 }
 
+
+function CustomTooltip({ active, payload }: any) {
+  if (active && payload && payload.length) {
+    return (
+      <div className="bg-[#1a2744] text-white p-3 rounded-xl shadow-2xl border border-white/10 backdrop-blur-md animate-fade-in pointer-events-none">
+        <p className="text-[10px] font-black uppercase tracking-widest mb-1 opacity-60">{payload[0].name}</p>
+        <p className="text-lg font-black leading-none flex items-center gap-2">
+          {payload[0].value}
+          <span className="text-[10px] font-bold opacity-60">Requests</span>
+        </p>
+      </div>
+    );
+  }
+  return null;
+}
+
+const renderActiveShape = (props: any) => {
+  const { cx, cy, innerRadius, outerRadius, startAngle, endAngle, fill, value } = props;
+
+  return (
+    <g>
+      <text x={cx} y={cy - 5} dy={8} textAnchor="middle" fill="#1a2744" className="text-3xl font-black tracking-tighter">
+        {value}
+      </text>
+      <text x={cx} y={cy + 12} dy={8} textAnchor="middle" fill="#8c9bba" className="text-[10px] font-black uppercase tracking-[0.2em]">
+        TOTAL
+      </text>
+      <Sector
+        cx={cx}
+        cy={cy}
+        innerRadius={innerRadius}
+        outerRadius={outerRadius + 6}
+        startAngle={startAngle}
+        endAngle={endAngle}
+        fill={fill}
+      />
+    </g>
+  );
+};
+
 function getStatusIcon(status: string) {
   if (status === "Resolved") return <CheckCircle2 size={12} />;
   if (status === "Closed") return <CircleDot size={12} />;
@@ -777,12 +875,12 @@ function getStatusIcon(status: string) {
 
 function getStatusStyle(status: string) {
   switch (status) {
-    case "Open": return "bg-red-50 text-[#e91e1eff] border-red-100";
+    case "Open": return "bg-[#fef2f2] text-[#7f1d1d] border-[#fecaca]";
     case "Work in Progress":
-    case "In Progress": return "bg-blue-50 text-[#0e12ffff] border-blue-100";
-    case "Resolved": return "bg-green-50 text-[#15eb39] border-green-100";
-    case "On Hold": return "bg-gray-50 text-[#8c9bba] border-gray-100";
-    case "Closed": return "bg-[#1a2744] text-white border-[#1a2744]";
+    case "In Progress": return "bg-[#fefce8] text-[#854d0e] border-[#fef08a]";
+    case "Resolved": return "bg-[#f0fdf4] text-[#166534] border-[#bbf7d0]";
+    case "On Hold": return "bg-[#f3f4f6] text-[#000000] border-[#000000]";
+    case "Closed": return "bg-[#f9fafb] text-[#374151] border-[#d1d5db]";
     default: return "bg-gray-50 text-[#1a2744] border-gray-100";
   }
 }
